@@ -34,11 +34,14 @@ npm run tauri dev
 ## テスト
 
 ```bash
-# Rustユニットテスト（46件）
-cd src-tauri && cargo test
+# 全テスト一括実行（型チェック + フロントエンド + Rust）
+npm run test:all
 
-# TypeScript型チェック
-npx tsc --noEmit
+# 個別実行
+npm test                  # フロントエンドテスト（vitest）
+npm run test:rust         # Rustユニットテスト
+npm run test:typecheck    # TypeScript型チェック
+npm run test:watch        # フロントエンドテスト（watchモード）
 ```
 
 ## ビルド
