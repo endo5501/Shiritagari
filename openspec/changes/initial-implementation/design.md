@@ -118,13 +118,8 @@ shiritagari/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                 # React frontend
-│   ├── App.tsx
-│   ├── components/
-│   │   ├── ChatWindow.tsx
-│   │   ├── MessageBubble.tsx
-│   │   └── InputBar.tsx
-│   └── hooks/
-│       └── useTauriEvents.ts
+│   ├── App.tsx          # チャットUI（単一コンポーネント構成）
+│   └── App.css          # スタイル
 ├── config.toml          # ユーザ設定
 └── package.json
 ```

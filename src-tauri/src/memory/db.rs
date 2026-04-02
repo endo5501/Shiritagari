@@ -82,6 +82,11 @@ impl Database {
                 processed_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(event_id, bucket_id)
             );
+
+            CREATE TABLE IF NOT EXISTS user_confirmations (
+                key TEXT PRIMARY KEY,
+                confirmed_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             ",
         )?;
         Ok(())

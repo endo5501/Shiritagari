@@ -1,5 +1,6 @@
 pub mod cleanup;
 pub mod confidence;
+pub mod confirmations;
 pub mod db;
 pub mod episodes;
 pub mod patterns;

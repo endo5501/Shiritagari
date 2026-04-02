@@ -128,22 +128,32 @@ impl Poller {
     }
 
     /// Acknowledge events and advance cursor AFTER successful processing.
-    /// This must be called only when inference and persistence succeeded.
+    /// Uses a single SQLite transaction for atomicity.
     pub fn acknowledge_events(&self, events: &[AwEvent], bucket_id: &str) {
+        if events.is_empty() {
+            return;
+        }
+
         let db = self.db.lock().unwrap();
 
-        for event in events {
-            let event_id = event
-                .id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| event.timestamp.clone());
-            db.mark_event_processed(&event_id, bucket_id).ok();
-        }
+        let event_pairs: Vec<(String, String)> = events
+            .iter()
+            .map(|e| {
+                let event_id = e
+                    .id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| e.timestamp.clone());
+                (event_id, bucket_id.to_string())
+            })
+            .collect();
 
-        // Advance cursor to the latest event timestamp
-        if let Some(latest) = events.iter().max_by_key(|e| &e.timestamp) {
-            db.update_cursor(bucket_id, &latest.timestamp).ok();
-        }
+        let latest_timestamp = events
+            .iter()
+            .max_by_key(|e| &e.timestamp)
+            .map(|e| e.timestamp.as_str())
+            .unwrap();
+
+        db.acknowledge_events_tx(&event_pairs, bucket_id, latest_timestamp).ok();
     }
 
     async fn check_afk(&self, afk_bucket_id: &str) -> bool {

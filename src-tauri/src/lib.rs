@@ -30,6 +30,8 @@ async fn send_message(message: String, state: State<'_, AppState>) -> Result<Str
     let context = {
         let db = state.db.lock().unwrap();
         let recent_specs = db.get_recent_speculations(5).unwrap_or_default();
+        let recent_episodes = db.get_recent_episodes(5).unwrap_or_default();
+        let active_patterns = db.get_all_active_patterns().unwrap_or_default();
         let profile = db.get_user_profile().ok().flatten();
 
         let mut ctx = String::new();
@@ -38,6 +40,18 @@ async fn send_message(message: String, state: State<'_, AppState>) -> Result<Str
                 "ユーザプロファイル: {}\n",
                 p.occupation.as_deref().unwrap_or("不明")
             ));
+        }
+        if !active_patterns.is_empty() {
+            ctx.push_str("学習済みパターン:\n");
+            for p in &active_patterns {
+                ctx.push_str(&format!("- {} ({}): {} (confidence: {:.2})\n", p.trigger_app, p.trigger_title_contains, p.meaning, p.confidence));
+            }
+        }
+        if !recent_episodes.is_empty() {
+            ctx.push_str("最近のエピソード記憶:\n");
+            for e in &recent_episodes {
+                ctx.push_str(&format!("- {} ({}): Q:{} A:{}\n", e.context_app, e.timestamp, e.question, e.answer));
+            }
         }
         if !recent_specs.is_empty() {
             ctx.push_str("最近の推測:\n");
@@ -159,6 +173,29 @@ pub fn run() {
                 let aw_client = AwClient::default();
                 let poller = Poller::new(aw_client, db_clone.clone(), config_clone.polling.interval_minutes);
                 let engine = InferenceEngine::new(config_clone.clone());
+
+                // Check if external API needs first-use confirmation
+                let inference_provider_name = config_clone.llm.inference_provider
+                    .as_deref()
+                    .unwrap_or(&config_clone.llm.provider);
+                if inference_provider_name == "claude" || inference_provider_name == "openai" {
+                    let confirmation_key = format!("external_api_{}", inference_provider_name);
+                    let needs_confirmation = {
+                        let db = db_clone.lock().unwrap();
+                        !db.is_confirmed(&confirmation_key).unwrap_or(true)
+                    };
+                    if needs_confirmation {
+                        app_handle.emit(
+                            "shiritagari-question",
+                            &format!(
+                                "外部LLM API ({}) を推論に使用します。ウィンドウタイトル等の操作データが外部サーバーに送信されます。よろしいですか？（このメッセージは初回のみ表示されます）",
+                                inference_provider_name
+                            ),
+                        ).ok();
+                        let db = db_clone.lock().unwrap();
+                        db.set_confirmed(&confirmation_key).ok();
+                    }
+                }
 
                 loop {
                     tokio::time::sleep(poller.interval_duration()).await;

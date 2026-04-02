@@ -42,6 +42,27 @@ impl Database {
         )?;
         Ok(())
     }
+
+    /// Acknowledge multiple events and update cursor in a single transaction.
+    pub fn acknowledge_events_tx(&self, events: &[(String, String)], bucket_id: &str, latest_timestamp: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (event_id, _bucket) in events {
+            tx.execute(
+                "INSERT OR IGNORE INTO processed_events (event_id, bucket_id) VALUES (?1, ?2)",
+                params![event_id, bucket_id],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO polling_cursors (bucket_id, last_event_timestamp, updated_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(bucket_id) DO UPDATE SET
+               last_event_timestamp = ?2,
+               updated_at = datetime('now')",
+            params![bucket_id, latest_timestamp],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -84,5 +105,54 @@ mod tests {
 
         // Duplicate insert should not fail (INSERT OR IGNORE)
         db.mark_event_processed("evt-1", "bucket-a").unwrap();
+    }
+
+    #[test]
+    fn test_acknowledge_events_tx_atomic() {
+        let db = Database::open_in_memory().unwrap();
+        let bucket = "aw-watcher-window_host";
+
+        let events = vec![
+            ("evt-1".to_string(), bucket.to_string()),
+            ("evt-2".to_string(), bucket.to_string()),
+            ("evt-3".to_string(), bucket.to_string()),
+        ];
+
+        db.acknowledge_events_tx(&events, bucket, "2026-04-01T12:00:00").unwrap();
+
+        // All events should be marked as processed
+        assert!(db.is_event_processed("evt-1", bucket).unwrap());
+        assert!(db.is_event_processed("evt-2", bucket).unwrap());
+        assert!(db.is_event_processed("evt-3", bucket).unwrap());
+
+        // Cursor should be updated
+        assert_eq!(
+            db.get_cursor(bucket).unwrap().as_deref(),
+            Some("2026-04-01T12:00:00")
+        );
+    }
+
+    #[test]
+    fn test_acknowledge_events_tx_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let bucket = "aw-watcher-window_host";
+
+        // First batch
+        let events1 = vec![("evt-1".to_string(), bucket.to_string())];
+        db.acknowledge_events_tx(&events1, bucket, "2026-04-01T10:00:00").unwrap();
+
+        // Second batch with overlap
+        let events2 = vec![
+            ("evt-1".to_string(), bucket.to_string()),
+            ("evt-2".to_string(), bucket.to_string()),
+        ];
+        db.acknowledge_events_tx(&events2, bucket, "2026-04-01T11:00:00").unwrap();
+
+        assert!(db.is_event_processed("evt-1", bucket).unwrap());
+        assert!(db.is_event_processed("evt-2", bucket).unwrap());
+        assert_eq!(
+            db.get_cursor(bucket).unwrap().as_deref(),
+            Some("2026-04-01T11:00:00")
+        );
     }
 }
