@@ -15,6 +15,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
 
   useEffect(() => {
     const unlisten = listen<string>("shiritagari-question", (event) => {
@@ -77,8 +78,18 @@ function App() {
     }
   };
 
+  const handleCompositionStart = () => {
+    composingRef.current = true;
+  };
+
+  const handleCompositionEnd = () => {
+    setTimeout(() => {
+      composingRef.current = false;
+    }, 20);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !composingRef.current) {
       e.preventDefault();
       handleSend();
     }
@@ -115,6 +126,8 @@ function App() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           placeholder={pendingQuestion ? "質問に回答..." : "メッセージを入力..."}
           rows={1}
           disabled={isLoading}
