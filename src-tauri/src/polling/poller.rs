@@ -1,6 +1,5 @@
 use log::{info, warn};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
 use super::aw_client::{AwClient, AwEvent};
@@ -68,7 +67,7 @@ impl Poller {
 
         // Get cursor for window bucket
         let cursor = {
-            let db = self.db.lock().await;
+            let db = self.db.lock().unwrap();
             db.get_cursor(&window_bucket).ok().flatten()
         };
 
@@ -81,7 +80,7 @@ impl Poller {
 
         // Deduplicate and update cursor within a transaction
         let new_events = {
-            let db = self.db.lock().await;
+            let db = self.db.lock().unwrap();
             let mut new = Vec::new();
 
             for event in &events {

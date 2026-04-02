@@ -19,23 +19,38 @@ pub struct InferenceResult {
     pub question: Option<String>,
 }
 
+/// Intermediate data collected from DB (all sync)
+pub struct DbContext {
+    pub event_summaries: Vec<EventSummary>,
+    pub patterns_summaries: Vec<PatternSummary>,
+    pub recent_episodes: Vec<EpisodeSummary>,
+    pub profile: Option<String>,
+    pub primary_app: String,
+    pub primary_title: String,
+}
+
+/// Result from pattern matching (sync)
+pub enum PatternMatchResult {
+    Silent,
+    ReAsk(InferenceResult),
+    NeedLlm(DbContext),
+}
+
 impl InferenceEngine {
     pub fn new(config: AppConfig) -> Self {
         Self { config }
     }
 
-    /// Process a batch of window events and determine the appropriate action.
-    pub async fn process_events(
+    /// Synchronous: check patterns and gather DB context
+    pub fn check_patterns_and_gather_context(
         &self,
         events: &[AwEvent],
         db: &Database,
-        provider: &dyn LlmProvider,
-    ) -> Result<Option<InferenceResult>, String> {
+    ) -> Option<PatternMatchResult> {
         if events.is_empty() {
-            return Ok(None);
+            return None;
         }
 
-        // Filter events by privacy settings
         let filtered: Vec<&AwEvent> = events
             .iter()
             .filter(|e| {
@@ -46,12 +61,12 @@ impl InferenceEngine {
             .collect();
 
         if filtered.is_empty() {
-            return Ok(None);
+            return None;
         }
 
-        // Try pattern matching first
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
+        // Try pattern matching
         for event in &filtered {
             let app = match event.app() {
                 Some(a) => a,
@@ -71,10 +86,9 @@ impl InferenceEngine {
 
                 match action {
                     ConfidenceAction::Silent => {
-                        // Update confidence and move on
                         let new_conf = (pattern.confidence + 0.01).min(1.0);
                         db.update_pattern_confidence(pattern.id, new_conf, &now).ok();
-                        continue;
+                        return Some(PatternMatchResult::Silent);
                     }
                     ConfidenceAction::SoftDelete => {
                         db.soft_delete_pattern(pattern.id, &now).ok();
@@ -84,7 +98,7 @@ impl InferenceEngine {
                             "以前「{}」と教えてもらった行動パターンですが、今も同じですか？（{}を使用中）",
                             pattern.meaning, app
                         );
-                        return Ok(Some(InferenceResult {
+                        return Some(PatternMatchResult::ReAsk(InferenceResult {
                             inference: pattern.meaning.clone(),
                             confidence: eff_conf,
                             action: ConfidenceAction::ReAsk,
@@ -96,7 +110,7 @@ impl InferenceEngine {
             }
         }
 
-        // No pattern match or all were silent — use LLM inference
+        // Gather context for LLM
         let event_summaries: Vec<EventSummary> = filtered
             .iter()
             .map(|e| EventSummary {
@@ -117,7 +131,7 @@ impl InferenceEngine {
             })
             .collect();
 
-        let patterns = db
+        let patterns_summaries = db
             .get_all_active_patterns()
             .unwrap_or_default()
             .into_iter()
@@ -142,27 +156,54 @@ impl InferenceEngine {
                 )
             });
 
-        let input = InferenceInput {
-            events: event_summaries,
-            patterns,
+        let primary_app = filtered[0].app().unwrap_or("unknown").to_string();
+        let primary_title = filtered[0].title().unwrap_or("").to_string();
+
+        Some(PatternMatchResult::NeedLlm(DbContext {
+            event_summaries,
+            patterns_summaries,
             recent_episodes,
-            user_profile: profile,
+            profile,
+            primary_app,
+            primary_title,
+        }))
+    }
+
+    /// Async: call LLM for inference
+    pub async fn call_llm(
+        &self,
+        ctx: &DbContext,
+        provider: &dyn LlmProvider,
+    ) -> Result<InferenceOutput, String> {
+        let input = InferenceInput {
+            events: ctx.event_summaries.clone(),
+            patterns: ctx.patterns_summaries.clone(),
+            recent_episodes: ctx.recent_episodes.clone(),
+            user_profile: ctx.profile.clone(),
         };
 
-        let output = provider.infer(&input).await?;
+        provider.infer(&input).await
+    }
 
+    /// Synchronous: save speculation to DB
+    pub fn save_speculation(
+        &self,
+        output: &InferenceOutput,
+        primary_app: &str,
+        primary_title: &str,
+        db: &Database,
+    ) -> InferenceResult {
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
         let action = determine_action(output.confidence, &self.config.confidence, false);
 
-        // Save speculation
-        let primary_event = &filtered[0];
         let expires = (Utc::now() + chrono::Duration::days(3))
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
 
         db.create_speculation(&NewSpeculation {
-            timestamp: now.clone(),
-            observed_app: primary_event.app().unwrap_or("unknown").to_string(),
-            observed_title: primary_event.title().unwrap_or("").to_string(),
+            timestamp: now,
+            observed_app: primary_app.to_string(),
+            observed_title: primary_title.to_string(),
             inference: output.inference.clone(),
             confidence: output.confidence,
             asked_user: output.should_ask,
@@ -177,11 +218,11 @@ impl InferenceEngine {
             None
         };
 
-        Ok(Some(InferenceResult {
-            inference: output.inference,
+        InferenceResult {
+            inference: output.inference.clone(),
             confidence: output.confidence,
             action,
             question,
-        }))
+        }
     }
 }
