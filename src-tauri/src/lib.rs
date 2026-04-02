@@ -132,8 +132,10 @@ pub fn run() {
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
             let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().unwrap())
+                .icon_as_template(true)
+                .tooltip("Shiritagari")
                 .menu(&menu)
-                .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -145,15 +147,6 @@ pub fn run() {
                         app.exit(0);
                     }
                     _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            window.show().ok();
-                            window.set_focus().ok();
-                        }
-                    }
                 })
                 .build(app)?;
 
