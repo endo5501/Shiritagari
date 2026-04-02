@@ -26,6 +26,13 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: #e94560;
+  display: inline;
+}
+
+.pending-indicator {
+  font-size: 11px;
+  color: #e9a545;
+  margin-left: 12px;
 }
 
 .chat-messages {
@@ -84,6 +91,10 @@ body {
   border: 1px solid #0f3460;
   color: #e0e0e0;
   border-bottom-left-radius: 4px;
+}
+
+.message.question .message-bubble {
+  border-color: #e9a545;
 }
 
 .message.system .message-bubble {

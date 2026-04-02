@@ -90,22 +90,20 @@ impl AwClient {
         start: Option<&str>,
         limit: Option<usize>,
     ) -> Result<Vec<AwEvent>, AwError> {
-        let mut url = format!("{}/api/0/buckets/{}/events", self.base_url, bucket_id);
+        let url = format!("{}/api/0/buckets/{}/events", self.base_url, bucket_id);
 
-        let mut params = Vec::new();
+        let mut query_params: Vec<(&str, String)> = Vec::new();
         if let Some(start) = start {
-            params.push(format!("start={}", start));
+            query_params.push(("start", start.to_string()));
         }
         if let Some(limit) = limit {
-            params.push(format!("limit={}", limit));
-        }
-        if !params.is_empty() {
-            url = format!("{}?{}", url, params.join("&"));
+            query_params.push(("limit", limit.to_string()));
         }
 
         let resp = self
             .client
             .get(&url)
+            .query(&query_params)
             .send()
             .await
             .map_err(|e| AwError::ConnectionFailed(e.to_string()))?;

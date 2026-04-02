@@ -14,6 +14,7 @@ pub struct Poller {
 #[derive(Debug)]
 pub struct PollResult {
     pub window_events: Vec<AwEvent>,
+    pub window_bucket: String,
     pub is_afk: bool,
     pub skipped_afk: bool,
 }
@@ -31,7 +32,8 @@ impl Poller {
         self.aw_client.is_available().await
     }
 
-    /// Perform a single poll cycle. Returns None if AW is unavailable.
+    /// Perform a single poll cycle: fetch events but do NOT acknowledge them.
+    /// Caller must call `acknowledge_events` after successful processing.
     pub async fn poll_once(&self) -> Option<PollResult> {
         if !self.aw_client.is_available().await {
             warn!("ActivityWatch is not available, skipping poll");
@@ -60,6 +62,7 @@ impl Poller {
             info!("User is AFK, skipping inference");
             return Some(PollResult {
                 window_events: vec![],
+                window_bucket,
                 is_afk: true,
                 skipped_afk: true,
             });
@@ -71,43 +74,76 @@ impl Poller {
             db.get_cursor(&window_bucket).ok().flatten()
         };
 
-        // Fetch events since cursor
-        let events = self
-            .aw_client
-            .get_events(&window_bucket, cursor.as_deref(), Some(100))
-            .await
-            .unwrap_or_default();
+        // Fetch ALL events since cursor (paginate until exhausted)
+        let mut all_events = Vec::new();
+        let page_size = 100;
+        let mut offset_cursor = cursor.clone();
 
-        // Deduplicate and update cursor within a transaction
+        loop {
+            let events = self
+                .aw_client
+                .get_events(&window_bucket, offset_cursor.as_deref(), Some(page_size))
+                .await
+                .unwrap_or_default();
+
+            let count = events.len();
+            if count == 0 {
+                break;
+            }
+
+            // Update cursor for next page to the last event's timestamp
+            if let Some(last) = events.last() {
+                offset_cursor = Some(last.timestamp.clone());
+            }
+
+            all_events.extend(events);
+
+            // If we got fewer than page_size, we've exhausted the results
+            if count < page_size {
+                break;
+            }
+        }
+
+        // Filter out already-processed events (read-only check, no acknowledgement)
         let new_events = {
             let db = self.db.lock().unwrap();
-            let mut new = Vec::new();
-
-            for event in &events {
-                let event_id = event
-                    .id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| event.timestamp.clone());
-
-                if !db.is_event_processed(&event_id, &window_bucket).unwrap_or(true) {
-                    db.mark_event_processed(&event_id, &window_bucket).ok();
-                    new.push(event.clone());
-                }
-            }
-
-            // Update cursor to latest event timestamp
-            if let Some(latest) = events.first() {
-                db.update_cursor(&window_bucket, &latest.timestamp).ok();
-            }
-
-            new
+            all_events
+                .into_iter()
+                .filter(|event| {
+                    let event_id = event
+                        .id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| event.timestamp.clone());
+                    !db.is_event_processed(&event_id, &window_bucket).unwrap_or(true)
+                })
+                .collect()
         };
 
         Some(PollResult {
             window_events: new_events,
+            window_bucket,
             is_afk: false,
             skipped_afk: false,
         })
+    }
+
+    /// Acknowledge events and advance cursor AFTER successful processing.
+    /// This must be called only when inference and persistence succeeded.
+    pub fn acknowledge_events(&self, events: &[AwEvent], bucket_id: &str) {
+        let db = self.db.lock().unwrap();
+
+        for event in events {
+            let event_id = event
+                .id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| event.timestamp.clone());
+            db.mark_event_processed(&event_id, bucket_id).ok();
+        }
+
+        // Advance cursor to the latest event timestamp
+        if let Some(latest) = events.iter().max_by_key(|e| &e.timestamp) {
+            db.update_cursor(bucket_id, &latest.timestamp).ok();
+        }
     }
 
     async fn check_afk(&self, afk_bucket_id: &str) -> bool {

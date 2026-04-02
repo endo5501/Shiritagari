@@ -178,12 +178,17 @@ pub fn run() {
                             engine.check_patterns_and_gather_context(&result.window_events, &db)
                         };
 
+                        let mut processed_ok = false;
+
                         match match_result {
-                            Some(inference::engine::PatternMatchResult::Silent) => {},
+                            Some(inference::engine::PatternMatchResult::Silent) => {
+                                processed_ok = true;
+                            },
                             Some(inference::engine::PatternMatchResult::ReAsk(ir)) => {
                                 if let Some(question) = ir.question {
                                     app_handle.emit("shiritagari-question", &question).ok();
                                 }
+                                processed_ok = true;
                             }
                             Some(inference::engine::PatternMatchResult::NeedLlm(ctx)) => {
                                 // Step 2: Async - call LLM (no lock held)
@@ -196,9 +201,18 @@ pub fn run() {
                                     if let Some(question) = ir.question {
                                         app_handle.emit("shiritagari-question", &question).ok();
                                     }
+                                    processed_ok = true;
                                 }
+                                // If LLM failed, processed_ok stays false — events will be retried next cycle
                             }
-                            None => {}
+                            None => {
+                                processed_ok = true;
+                            }
+                        }
+
+                        // Only acknowledge events after successful processing
+                        if processed_ok {
+                            poller.acknowledge_events(&result.window_events, &result.window_bucket);
                         }
 
                         // Run periodic cleanup
