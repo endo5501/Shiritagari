@@ -17,30 +17,30 @@
 
 ## 3. ActivityWatch連携 (activity-observation)
 
-- [ ] 3.1 ActivityWatch REST APIクライアント実装（buckets一覧、events取得、カーソルベースのフェッチ）
-- [ ] 3.2 ポーリングループ実装（tokioベース定期タスク、間隔設定可能、カーソル永続化）
-- [ ] 3.3b イベント冪等性の保証（UNIQUE制約、UPSERT、カーソル更新のトランザクション一括コミット）
-- [ ] 3.3 AFK判定ロジック実装（AFKならスキップ）
-- [ ] 3.4 ActivityWatch未接続時のグレースフル動作（接続チェック、自動再開）
+- [x] 3.1 ActivityWatch REST APIクライアント実装（buckets一覧、events取得、カーソルベースのフェッチ）
+- [x] 3.2 ポーリングループ実装（tokioベース定期タスク、間隔設定可能、カーソル永続化）
+- [x] 3.3b イベント冪等性の保証（UNIQUE制約、UPSERT、カーソル更新のトランザクション一括コミット）
+- [x] 3.3 AFK判定ロジック実装（AFKならスキップ）
+- [x] 3.4 ActivityWatch未接続時のグレースフル動作（接続チェック、自動再開）
 
 ## 4. LLMプロバイダ (llm-provider)
 
-- [ ] 4.1 LlmProvider trait定義（infer, chat）
-- [ ] 4.2 Claude APIプロバイダ実装
-- [ ] 4.3 OpenAI APIプロバイダ実装
-- [ ] 4.4 Ollamaプロバイダ実装
-- [ ] 4.5 プロバイダファクトリ実装（設定に基づくプロバイダ生成、推論用/対話用分離、デフォルトOllama）
+- [x] 4.1 LlmProvider trait定義（infer, chat）
+- [x] 4.2 Claude APIプロバイダ実装
+- [x] 4.3 OpenAI APIプロバイダ実装
+- [x] 4.4 Ollamaプロバイダ実装
+- [x] 4.5 プロバイダファクトリ実装（設定に基づくプロバイダ生成、推論用/対話用分離、デフォルトOllama）
 - [ ] 4.6 外部API初回利用時の確認通知実装
-- [ ] 4.7 アプリ許可リスト/拒否リスト実装（blocklist対象アプリのイベント除外）
-- [ ] 4.8 リダクションパイプライン実装（メールアドレス、URLトークン等のマスキング）
+- [x] 4.7 アプリ許可リスト/拒否リスト実装（blocklist対象アプリのイベント除外）
+- [x] 4.8 リダクションパイプライン実装（メールアドレス、URLトークン等のマスキング）
 
 ## 5. 行動推論エンジン (behavior-inference)
 
-- [ ] 5.1 推論プロンプト設計（イベントログ+記憶+プロファイルを入力とするプロンプトテンプレート）
-- [ ] 5.2 パターン記憶照合ロジック実装（マッチ判定、confidence更新）
-- [ ] 5.3 LLM推論呼び出しと結果パース実装（inference, confidence, should_ask, suggested_question）
-- [ ] 5.4 質問判定ロジック実装（統一ステートマシン: silent/ask/re-ask/soft-delete、1ポーリング最大1質問）
-- [ ] 5.5 ポーリング→推論→質問/記録の統合フロー実装
+- [x] 5.1 推論プロンプト設計（イベントログ+記憶+プロファイルを入力とするプロンプトテンプレート）
+- [x] 5.2 パターン記憶照合ロジック実装（マッチ判定、confidence更新）
+- [x] 5.3 LLM推論呼び出しと結果パース実装（inference, confidence, should_ask, suggested_question）
+- [x] 5.4 質問判定ロジック実装（統一ステートマシン: silent/ask/re-ask/soft-delete、1ポーリング最大1質問）
+- [x] 5.5 ポーリング→推論→質問/記録の統合フロー実装
 
 ## 6. チャットインターフェース (chat-interface)
 

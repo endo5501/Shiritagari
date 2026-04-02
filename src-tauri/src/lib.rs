@@ -1,5 +1,8 @@
 pub mod config;
+pub mod inference;
 pub mod memory;
+pub mod polling;
+pub mod providers;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
