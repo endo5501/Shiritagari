@@ -118,6 +118,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![send_message, answer_question])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Hide instead of closing so the app stays in system tray
+                window.hide().ok();
+                api.prevent_close();
+            }
+        })
         .setup(move |app| {
             // System tray
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
@@ -126,6 +133,7 @@ pub fn run() {
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
+                .show_menu_on_left_click(false)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
