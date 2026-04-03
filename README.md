@@ -29,6 +29,15 @@ cd src-tauri && cargo check && cd ..
 ```bash
 # 開発モードで起動（ホットリロード対応）
 npm run tauri dev
+
+# デバッグログ付きで起動（ポーリング判定過程を表示）
+RUST_LOG=debug npm run tauri dev
+
+# 重要な判定結果のみ表示
+RUST_LOG=info npm run tauri dev
+
+# 特定モジュールのみ
+RUST_LOG=shiritagari_app_lib::polling=debug npm run tauri dev
 ```
 
 ## テスト

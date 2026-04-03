@@ -6,6 +6,7 @@ pub mod providers;
 
 use config::AppConfig;
 use inference::InferenceEngine;
+use log::{debug, info, warn};
 use memory::Database;
 use polling::{AwClient, Poller};
 use providers::factory::{create_chat_provider, create_inference_provider};
@@ -103,6 +104,8 @@ async fn answer_question(answer: String, question_context: String, state: State<
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    env_logger::init();
+
     let config_path = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("shiritagari")
@@ -200,14 +203,24 @@ pub fn run() {
                 loop {
                     tokio::time::sleep(poller.interval_duration()).await;
 
+                    debug!("Polling cycle started");
+
                     if let Some(result) = poller.poll_once().await {
-                        if result.skipped_afk || result.window_events.is_empty() {
+                        if result.skipped_afk {
+                            debug!("Cycle skipped: user is AFK");
+                            continue;
+                        }
+                        if result.window_events.is_empty() {
+                            debug!("Cycle skipped: no new events");
                             continue;
                         }
 
                         let inference_provider = match create_inference_provider(&config_clone.llm) {
                             Ok(p) => p,
-                            Err(_) => continue,
+                            Err(e) => {
+                                warn!("Failed to create inference provider: {}", e);
+                                continue;
+                            }
                         };
 
                         // Step 1: Sync - check patterns and gather context (holds lock briefly)
@@ -220,30 +233,39 @@ pub fn run() {
 
                         match match_result {
                             Some(inference::engine::PatternMatchResult::Silent) => {
+                                debug!("Result: Silent (known pattern, high confidence)");
                                 processed_ok = true;
                             },
                             Some(inference::engine::PatternMatchResult::ReAsk(ir)) => {
-                                if let Some(question) = ir.question {
-                                    app_handle.emit("shiritagari-question", &question).ok();
+                                if let Some(ref question) = ir.question {
+                                    info!("Emitting re-ask question to frontend");
+                                    app_handle.emit("shiritagari-question", question).ok();
                                 }
                                 processed_ok = true;
                             }
                             Some(inference::engine::PatternMatchResult::NeedLlm(ctx)) => {
+                                debug!("Calling LLM for inference (app: {})", ctx.primary_app);
                                 // Step 2: Async - call LLM (no lock held)
-                                if let Ok(output) = engine.call_llm(&ctx, inference_provider.as_ref()).await {
-                                    // Step 3: Sync - save results (holds lock briefly)
-                                    let ir = {
-                                        let db = db_clone.lock().unwrap();
-                                        engine.save_speculation(&output, &ctx.primary_app, &ctx.primary_title, &db)
-                                    };
-                                    if let Some(question) = ir.question {
-                                        app_handle.emit("shiritagari-question", &question).ok();
+                                match engine.call_llm(&ctx, inference_provider.as_ref()).await {
+                                    Ok(output) => {
+                                        // Step 3: Sync - save results (holds lock briefly)
+                                        let ir = {
+                                            let db = db_clone.lock().unwrap();
+                                            engine.save_speculation(&output, &ctx.primary_app, &ctx.primary_title, &db)
+                                        };
+                                        if let Some(ref question) = ir.question {
+                                            info!("Emitting question to frontend");
+                                            app_handle.emit("shiritagari-question", question).ok();
+                                        }
+                                        processed_ok = true;
                                     }
-                                    processed_ok = true;
+                                    Err(e) => {
+                                        warn!("LLM inference failed: {}", e);
+                                    }
                                 }
-                                // If LLM failed, processed_ok stays false — events will be retried next cycle
                             }
                             None => {
+                                debug!("No actionable events after filtering");
                                 processed_ok = true;
                             }
                         }
@@ -251,6 +273,7 @@ pub fn run() {
                         // Only acknowledge events after successful processing
                         if processed_ok {
                             poller.acknowledge_events(&result.window_events, &result.window_bucket);
+                            debug!("Events acknowledged, cycle complete");
                         }
 
                         // Run periodic cleanup
@@ -258,6 +281,8 @@ pub fn run() {
                             let db = db_clone.lock().unwrap();
                             db.run_cleanup().ok();
                         }
+                    } else {
+                        debug!("Cycle skipped: poll_once returned None");
                     }
                 }
             });
