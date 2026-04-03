@@ -1,4 +1,5 @@
 use chrono::Utc;
+use log::{debug, info};
 
 use crate::config::AppConfig;
 use crate::memory::confidence::{calculate_effective_confidence, determine_action, ConfidenceAction};
@@ -60,7 +61,14 @@ impl InferenceEngine {
             })
             .collect();
 
+        debug!(
+            "Privacy filter: {} events -> {} after filtering",
+            events.len(),
+            filtered.len()
+        );
+
         if filtered.is_empty() {
+            info!("All events excluded by privacy filter");
             return None;
         }
 
@@ -83,6 +91,11 @@ impl InferenceEngine {
                 );
 
                 let action = determine_action(eff_conf, &self.config.confidence, true);
+
+                info!(
+                    "Pattern match: app={}, effective_confidence={:.3}, action={:?}",
+                    app, eff_conf, action
+                );
 
                 match action {
                     ConfidenceAction::Silent => {
@@ -109,6 +122,8 @@ impl InferenceEngine {
                 }
             }
         }
+
+        info!("No pattern match, proceeding to LLM inference");
 
         // Gather context for LLM
         let event_summaries: Vec<EventSummary> = filtered
@@ -195,6 +210,11 @@ impl InferenceEngine {
     ) -> InferenceResult {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
         let action = determine_action(output.confidence, &self.config.confidence, false);
+
+        info!(
+            "LLM result: confidence={:.3}, should_ask={}, action={:?}",
+            output.confidence, output.should_ask, action
+        );
 
         let expires = (Utc::now() + chrono::Duration::days(3))
             .format("%Y-%m-%dT%H:%M:%S")

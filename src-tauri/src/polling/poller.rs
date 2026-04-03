@@ -1,4 +1,4 @@
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
@@ -59,7 +59,7 @@ impl Poller {
         };
 
         if is_afk {
-            info!("User is AFK, skipping inference");
+            info!("AFK detected, skipping inference");
             return Some(PollResult {
                 window_events: vec![],
                 window_bucket,
@@ -67,6 +67,8 @@ impl Poller {
                 skipped_afk: true,
             });
         }
+
+        debug!("User is active (not AFK)");
 
         // Get cursor for window bucket
         let cursor = {
@@ -104,8 +106,14 @@ impl Poller {
             }
         }
 
+        debug!(
+            "Fetched {} events from ActivityWatch (cursor: {})",
+            all_events.len(),
+            cursor.as_deref().unwrap_or("none")
+        );
+
         // Filter out already-processed events (read-only check, no acknowledgement)
-        let new_events = {
+        let new_events: Vec<_> = {
             let db = self.db.lock().unwrap();
             all_events
                 .into_iter()
@@ -118,6 +126,8 @@ impl Poller {
                 })
                 .collect()
         };
+
+        debug!("{} new events after deduplication", new_events.len());
 
         Some(PollResult {
             window_events: new_events,
