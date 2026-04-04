@@ -3,6 +3,7 @@ use log::debug;
 use reqwest::Client;
 use serde_json::json;
 
+use super::json_extract::extract_json;
 use super::types::*;
 
 pub struct OllamaProvider {
@@ -79,8 +80,9 @@ impl LlmProvider for OllamaProvider {
         debug!("Prompt size: {} chars", prompt.len());
         let messages = vec![json!({"role": "user", "content": prompt})];
         let response_text = self.call_api(&messages).await?;
+        let json_text = extract_json(&response_text);
 
-        serde_json::from_str(&response_text).map_err(|e| {
+        serde_json::from_str(json_text).map_err(|e| {
             format!("Failed to parse inference output: {}. Raw: {}", e, response_text)
         })
     }

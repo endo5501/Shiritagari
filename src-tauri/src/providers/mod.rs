@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod factory;
+pub mod json_extract;
 pub mod ollama;
 pub mod openai;
 pub mod redaction;
