@@ -2,6 +2,7 @@ use chrono::Utc;
 use log::{debug, info};
 
 use crate::config::AppConfig;
+use crate::inference::aggregation::aggregate_events;
 use crate::memory::confidence::{calculate_effective_confidence, determine_action, ConfidenceAction};
 use crate::memory::{Database, NewSpeculation};
 use crate::polling::AwEvent;
@@ -22,7 +23,7 @@ pub struct InferenceResult {
 
 /// Intermediate data collected from DB (all sync)
 pub struct DbContext {
-    pub event_summaries: Vec<EventSummary>,
+    pub event_summaries: Vec<AggregatedEvent>,
     pub patterns_summaries: Vec<PatternSummary>,
     pub recent_episodes: Vec<EpisodeSummary>,
     pub profile: Option<String>,
@@ -125,15 +126,26 @@ impl InferenceEngine {
 
         info!("No pattern match, proceeding to LLM inference");
 
-        // Gather context for LLM
-        let event_summaries: Vec<EventSummary> = filtered
+        // Gather context for LLM: aggregate events by (app, title)
+        let raw_events: Vec<(String, String, f64, String)> = filtered
             .iter()
-            .map(|e| EventSummary {
-                app: e.app().unwrap_or("unknown").to_string(),
-                title: redact_text(e.title().unwrap_or(""), &self.config.privacy),
-                duration_seconds: e.duration,
-            })
+            .map(|e| (
+                e.app().unwrap_or("unknown").to_string(),
+                redact_text(e.title().unwrap_or(""), &self.config.privacy),
+                e.duration,
+                e.timestamp.clone(),
+            ))
             .collect();
+
+        let max_aggregated_entries = 30;
+        let event_summaries = aggregate_events(&raw_events, max_aggregated_entries);
+
+        debug!(
+            "Aggregated {} raw events into {} entries (limit: {})",
+            filtered.len(),
+            event_summaries.len(),
+            max_aggregated_entries
+        );
 
         let recent_episodes = db
             .get_recent_episodes(5)
@@ -190,6 +202,12 @@ impl InferenceEngine {
         ctx: &DbContext,
         provider: &dyn LlmProvider,
     ) -> Result<InferenceOutput, String> {
+        info!(
+            "LLM inference starting: {} aggregated events, provider={}",
+            ctx.event_summaries.len(),
+            provider.name()
+        );
+
         let input = InferenceInput {
             events: ctx.event_summaries.clone(),
             patterns: ctx.patterns_summaries.clone(),

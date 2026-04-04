@@ -255,10 +255,13 @@ pub fn run() {
                                 processed_ok = true;
                             }
                             Some(inference::engine::PatternMatchResult::NeedLlm(ctx)) => {
-                                debug!("Calling LLM for inference (app: {})", ctx.primary_app);
+                                info!("LLM inference starting (app: {}, events: {})", ctx.primary_app, ctx.event_summaries.len());
+                                let llm_start = std::time::Instant::now();
                                 // Step 2: Async - call LLM (no lock held)
                                 match engine.call_llm(&ctx, inference_provider.as_ref()).await {
                                     Ok(output) => {
+                                        let elapsed = llm_start.elapsed();
+                                        info!("LLM inference completed in {:.1}s", elapsed.as_secs_f64());
                                         // Step 3: Sync - save results (holds lock briefly)
                                         let ir = {
                                             let db = db_clone.lock().unwrap();
@@ -278,7 +281,8 @@ pub fn run() {
                                         processed_ok = true;
                                     }
                                     Err(e) => {
-                                        warn!("LLM inference failed: {}", e);
+                                        let elapsed = llm_start.elapsed();
+                                        warn!("LLM inference failed after {:.1}s: {}", elapsed.as_secs_f64(), e);
                                     }
                                 }
                             }

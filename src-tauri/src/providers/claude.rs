@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log::debug;
 use reqwest::Client;
 use serde_json::json;
 
@@ -20,11 +21,7 @@ impl ClaudeProvider {
     }
 
     fn build_inference_prompt(&self, input: &InferenceInput) -> String {
-        let events_text: Vec<String> = input
-            .events
-            .iter()
-            .map(|e| format!("- {} | {} ({}秒)", e.app, e.title, e.duration_seconds))
-            .collect();
+        let events_text = format_grouped_events(&input.events);
 
         let patterns_text: Vec<String> = input
             .patterns
@@ -60,7 +57,7 @@ impl ClaudeProvider {
   "should_ask": true/false（ユーザに質問すべきか）,
   "suggested_question": "質問文（should_askがtrueの場合）"
 }}"#,
-            events_text.join("\n"),
+            events_text,
             if patterns_text.is_empty() { "なし".to_string() } else { patterns_text.join("\n") },
             if episodes_text.is_empty() { "なし".to_string() } else { episodes_text.join("\n") },
             input.user_profile.as_deref().unwrap_or("不明"),
@@ -106,6 +103,7 @@ impl ClaudeProvider {
 impl LlmProvider for ClaudeProvider {
     async fn infer(&self, input: &InferenceInput) -> Result<InferenceOutput, String> {
         let prompt = self.build_inference_prompt(input);
+        debug!("Prompt size: {} chars", prompt.len());
         let messages = vec![json!({"role": "user", "content": prompt})];
         let response_text = self.call_api(&messages).await?;
 

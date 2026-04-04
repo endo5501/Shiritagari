@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log::debug;
 use reqwest::Client;
 use serde_json::json;
 
@@ -20,11 +21,7 @@ impl OllamaProvider {
     }
 
     fn build_inference_prompt(&self, input: &InferenceInput) -> String {
-        let events_text: Vec<String> = input
-            .events
-            .iter()
-            .map(|e| format!("- {} | {} ({}秒)", e.app, e.title, e.duration_seconds))
-            .collect();
+        let events_text = format_grouped_events(&input.events);
 
         format!(
             r#"以下のユーザのPC操作ログから、ユーザが何をしているか推測してください。
@@ -39,7 +36,7 @@ impl OllamaProvider {
   "should_ask": true/false,
   "suggested_question": "質問文またはnull"
 }}"#,
-            events_text.join("\n"),
+            events_text,
         )
     }
 
@@ -79,6 +76,7 @@ impl OllamaProvider {
 impl LlmProvider for OllamaProvider {
     async fn infer(&self, input: &InferenceInput) -> Result<InferenceOutput, String> {
         let prompt = self.build_inference_prompt(input);
+        debug!("Prompt size: {} chars", prompt.len());
         let messages = vec![json!({"role": "user", "content": prompt})];
         let response_text = self.call_api(&messages).await?;
 
