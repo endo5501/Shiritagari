@@ -3,11 +3,15 @@ use chrono::{DateTime, Duration, FixedOffset};
 /// Advance an ISO 8601 timestamp by 1 millisecond.
 ///
 /// Used to make pagination cursors exclusive when the API's `start` parameter is inclusive.
+/// Returns the original timestamp unchanged if parsing fails.
 pub fn advance_timestamp_1ms(timestamp: &str) -> String {
-    let dt: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(timestamp)
-        .expect("Invalid ISO 8601 timestamp");
-    let advanced = dt + Duration::milliseconds(1);
-    advanced.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string()
+    match DateTime::parse_from_rfc3339(timestamp) {
+        Ok(dt) => {
+            let advanced = dt + Duration::milliseconds(1);
+            advanced.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string()
+        }
+        Err(_) => timestamp.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -60,5 +64,17 @@ mod tests {
     fn test_advance_preserves_timezone_offset() {
         let result = advance_timestamp_1ms("2026-04-04T10:00:00.000+09:00");
         assert_eq!(result, "2026-04-04T10:00:00.001+09:00");
+    }
+
+    #[test]
+    fn test_advance_malformed_timestamp_returns_original() {
+        let result = advance_timestamp_1ms("not-a-timestamp");
+        assert_eq!(result, "not-a-timestamp");
+    }
+
+    #[test]
+    fn test_advance_missing_offset_returns_original() {
+        let result = advance_timestamp_1ms("2026-04-04T01:58:46");
+        assert_eq!(result, "2026-04-04T01:58:46");
     }
 }
