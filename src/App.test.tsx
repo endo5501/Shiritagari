@@ -10,7 +10,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),
 }));
 
-const mockStartDragging = vi.fn().mockResolvedValue(undefined);
+const { mockStartDragging } = vi.hoisted(() => ({
+  mockStartDragging: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     startDragging: mockStartDragging,
@@ -46,11 +48,10 @@ describe("Mascot UI", () => {
     Object.keys(listeners).forEach((k) => delete listeners[k]);
   });
 
-  test("renders character image and supports drag via mousedown", async () => {
+  test("renders character image and triggers drag on mousedown", async () => {
     await renderApp();
     const img = screen.getByAltText("mascot");
     expect(img).toBeInTheDocument();
-    // Drag is triggered by mousedown on parent div
     fireEvent.mouseDown(img.parentElement!);
     expect(mockStartDragging).toHaveBeenCalled();
   });

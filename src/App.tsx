@@ -4,29 +4,29 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
-type BubbleMode = "idle" | "thinking" | "asking";
-
 interface ThoughtPayload {
   inference: string;
   confidence: number;
 }
 
+const appWindow = getCurrentWindow();
+
 function App() {
   const [thought, setThought] = useState<string | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
-  const [bubbleMode, setBubbleMode] = useState<BubbleMode>("idle");
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const composingRef = useRef(false);
+
+  const isAsking = question !== null;
+  const bubbleText = isAsking ? question : thought;
+  const bubbleClass = isAsking ? "speech" : "thought";
 
   useEffect(() => {
     const unlistenThought = listen<ThoughtPayload>(
       "shiritagari-thought",
       (event) => {
         setThought(event.payload.inference);
-        if (bubbleMode !== "asking") {
-          setBubbleMode("thinking");
-        }
       }
     );
 
@@ -34,7 +34,6 @@ function App() {
       "shiritagari-question",
       (event) => {
         setQuestion(event.payload);
-        setBubbleMode("asking");
       }
     );
 
@@ -52,22 +51,20 @@ function App() {
     setIsLoading(true);
 
     try {
-      if (question && bubbleMode === "asking") {
+      if (isAsking) {
         await invoke("answer_question", {
           answer: trimmed,
           questionContext: question,
         });
         setQuestion(null);
-        setBubbleMode(thought ? "thinking" : "idle");
       } else {
         const response = await invoke<string>("send_message", {
           message: trimmed,
         });
         setThought(response);
-        setBubbleMode("thinking");
       }
-    } catch {
-      // Error handling - stay in current mode
+    } catch (err) {
+      console.error("Failed to send message:", err);
     } finally {
       setIsLoading(false);
     }
@@ -95,14 +92,11 @@ function App() {
     }
   };
 
-  const bubbleText =
-    bubbleMode === "asking" ? question : bubbleMode === "thinking" ? thought : null;
-
   return (
     <div className="mascot-container">
       {bubbleText && (
         <div
-          className={`bubble ${bubbleMode === "asking" ? "speech" : "thought"}`}
+          className={`bubble ${bubbleClass}`}
           data-testid="bubble"
         >
           <div className="bubble-text">{bubbleText}</div>
@@ -112,7 +106,7 @@ function App() {
 
       <div
         className="mascot-drag-area"
-        onMouseDown={() => getCurrentWindow().startDragging()}
+        onMouseDown={() => appWindow.startDragging()}
       >
         <img
           src="/default-mascot.png"
@@ -129,14 +123,12 @@ function App() {
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
-          placeholder={
-            bubbleMode === "asking" ? "質問に回答..." : "メッセージを入力..."
-          }
+          placeholder={isAsking ? "質問に回答..." : "メッセージを入力..."}
           rows={1}
           disabled={isLoading}
         />
         <button onClick={handleSend} disabled={isLoading || !input.trim()}>
-          {bubbleMode === "asking" ? "回答" : "送信"}
+          {isAsking ? "回答" : "送信"}
         </button>
       </div>
     </div>

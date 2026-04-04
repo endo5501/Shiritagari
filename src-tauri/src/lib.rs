@@ -25,6 +25,14 @@ pub struct AppState {
     pub config: AppConfig,
 }
 
+fn bring_window_to_front(app_handle: &tauri::AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.show().ok();
+        window.set_always_on_top(true).ok();
+        window.set_focus().ok();
+    }
+}
+
 #[tauri::command]
 async fn send_message(message: String, state: State<'_, AppState>) -> Result<String, String> {
     // Collect context from DB in a non-async block to avoid Send issues
@@ -220,11 +228,7 @@ pub fn run() {
                         if let Some(pending) = question_queue.check_afk_return(result.is_afk) {
                             info!("User returned from AFK, emitting pending question");
                             app_handle.emit("shiritagari-question", &pending).ok();
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                window.show().ok();
-                                window.set_always_on_top(true).ok();
-                                window.set_focus().ok();
-                            }
+                            bring_window_to_front(&app_handle);
                         }
 
                         if result.window_events.is_empty() {
