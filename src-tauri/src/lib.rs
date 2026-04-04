@@ -8,7 +8,7 @@ use config::AppConfig;
 use inference::InferenceEngine;
 use log::{debug, info, warn};
 use memory::Database;
-use polling::{AwClient, Poller};
+use polling::{AwClient, Poller, QuestionQueue};
 use providers::factory::{create_chat_provider, create_inference_provider};
 use providers::types::{ChatMessage, MessageRole};
 
@@ -200,18 +200,23 @@ pub fn run() {
                     }
                 }
 
+                let mut question_queue = QuestionQueue::new();
+
                 loop {
                     tokio::time::sleep(poller.interval_duration()).await;
 
                     debug!("Polling cycle started");
 
                     if let Some(result) = poller.poll_once().await {
-                        if result.skipped_afk {
-                            debug!("Cycle skipped: user is AFK");
-                            continue;
+                        // Check if user returned from AFK and emit any pending question
+                        if let Some(pending) = question_queue.check_afk_return(result.is_afk) {
+                            info!("User returned from AFK, emitting pending question");
+                            app_handle.emit("shiritagari-question", &pending).ok();
                         }
+
                         if result.window_events.is_empty() {
                             debug!("Cycle skipped: no new events");
+                            question_queue.update_afk_state(result.is_afk);
                             continue;
                         }
 
@@ -219,6 +224,7 @@ pub fn run() {
                             Ok(p) => p,
                             Err(e) => {
                                 warn!("Failed to create inference provider: {}", e);
+                                question_queue.update_afk_state(result.is_afk);
                                 continue;
                             }
                         };
@@ -238,8 +244,15 @@ pub fn run() {
                             },
                             Some(inference::engine::PatternMatchResult::ReAsk(ir)) => {
                                 if let Some(ref question) = ir.question {
-                                    info!("Emitting re-ask question to frontend");
-                                    app_handle.emit("shiritagari-question", question).ok();
+                                    match question_queue.process_question(question.clone(), result.is_afk) {
+                                        Some(q) => {
+                                            info!("Emitting re-ask question to frontend");
+                                            app_handle.emit("shiritagari-question", &q).ok();
+                                        }
+                                        None => {
+                                            debug!("Re-ask question queued (user is AFK)");
+                                        }
+                                    }
                                 }
                                 processed_ok = true;
                             }
@@ -254,8 +267,15 @@ pub fn run() {
                                             engine.save_speculation(&output, &ctx.primary_app, &ctx.primary_title, &db)
                                         };
                                         if let Some(ref question) = ir.question {
-                                            info!("Emitting question to frontend");
-                                            app_handle.emit("shiritagari-question", question).ok();
+                                            match question_queue.process_question(question.clone(), result.is_afk) {
+                                                Some(q) => {
+                                                    info!("Emitting question to frontend");
+                                                    app_handle.emit("shiritagari-question", &q).ok();
+                                                }
+                                                None => {
+                                                    debug!("Question queued (user is AFK)");
+                                                }
+                                            }
                                         }
                                         processed_ok = true;
                                     }
@@ -275,6 +295,9 @@ pub fn run() {
                             poller.acknowledge_events(&result.window_events, &result.window_bucket);
                             debug!("Events acknowledged, cycle complete");
                         }
+
+                        // Update AFK state at end of cycle
+                        question_queue.update_afk_state(result.is_afk);
 
                         // Run periodic cleanup
                         {
