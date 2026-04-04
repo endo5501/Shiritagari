@@ -16,7 +16,6 @@ pub struct PollResult {
     pub window_events: Vec<AwEvent>,
     pub window_bucket: String,
     pub is_afk: bool,
-    pub skipped_afk: bool,
 }
 
 impl Poller {
@@ -59,16 +58,10 @@ impl Poller {
         };
 
         if is_afk {
-            info!("AFK detected, skipping inference");
-            return Some(PollResult {
-                window_events: vec![],
-                window_bucket,
-                is_afk: true,
-                skipped_afk: true,
-            });
+            debug!("User is AFK, continuing with event fetch");
+        } else {
+            debug!("User is active (not AFK)");
         }
-
-        debug!("User is active (not AFK)");
 
         // Get cursor for window bucket
         let cursor = {
@@ -132,8 +125,7 @@ impl Poller {
         Some(PollResult {
             window_events: new_events,
             window_bucket,
-            is_afk: false,
-            skipped_afk: false,
+            is_afk,
         })
     }
 
