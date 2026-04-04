@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: ActivityWatch APIからイベントを定期取得する
-システムは設定された間隔（デフォルト10分）でActivityWatch REST API (localhost:5600) からウィンドウイベントとAFKイベントを取得しなければならない（SHALL）。
+システムは設定された間隔（デフォルト10分）でActivityWatch REST API (localhost:5600) からウィンドウイベントとAFKイベントを取得しなければならない（SHALL）。AFK状態に関わらずイベント取得と推論を実行しなければならない（SHALL）。
 
 #### Scenario: 正常なポーリング
 - **WHEN** ポーリング間隔が経過した時
@@ -9,7 +9,11 @@
 
 #### Scenario: ユーザがAFK状態の場合
 - **WHEN** aw-watcher-afkのステータスが "afk" である時
-- **THEN** 推論処理をスキップし、次のポーリングまで待機する
+- **THEN** イベント取得と推論は通常通り実行し、生成された質問はフロントエンドにemitせずメモリ上のキューに保存する
+
+#### Scenario: 前回と同じイベント状況の場合
+- **WHEN** 取得したイベントがすべて処理済みで新規イベントがない時
+- **THEN** 推論処理をスキップする（AFK・非AFK問わず）
 
 ### Requirement: ポーリングの冪等性を保証する
 システムはイベント処理の重複を防止するため、バケットごとの処理カーソルを永続化し、冪等性を保証しなければならない（SHALL）。
