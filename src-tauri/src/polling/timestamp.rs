@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, FixedOffset};
+use chrono::{DateTime, Duration};
 
 /// Advance an ISO 8601 timestamp by 1 millisecond.
 ///

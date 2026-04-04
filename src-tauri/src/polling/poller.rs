@@ -206,55 +206,43 @@ impl Poller {
     }
 }
 
-/// Paginate through events using the given fetch function.
-/// Advances cursor by +1ms between pages to avoid re-fetching inclusive boundaries.
-/// Stops after `max_pages` iterations as a safety limit.
-pub(crate) fn paginate_events<F>(
-    initial_cursor: Option<String>,
-    page_size: usize,
-    max_pages: usize,
-    mut fetch: F,
-) -> Vec<AwEvent>
-where
-    F: FnMut(Option<&str>, usize) -> Vec<AwEvent>,
-{
-    let mut all_events = Vec::new();
-    let mut offset_cursor = initial_cursor;
-
-    for page in 0..max_pages {
-        let events = fetch(offset_cursor.as_deref(), page_size);
-
-        let count = events.len();
-        if count == 0 {
-            break;
-        }
-
-        if let Some(last) = events.last() {
-            offset_cursor = Some(advance_timestamp_1ms(&last.timestamp));
-        }
-
-        all_events.extend(events);
-
-        if count < page_size {
-            break;
-        }
-
-        if page == max_pages - 1 {
-            warn!(
-                "Pagination reached maximum of {} pages ({} events). Continuing with fetched events.",
-                max_pages,
-                all_events.len()
-            );
-        }
-    }
-
-    all_events
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    /// Test-only pagination helper that mirrors the logic in `poll_once()`.
+    fn paginate_events<F>(
+        initial_cursor: Option<String>,
+        page_size: usize,
+        max_pages: usize,
+        mut fetch: F,
+    ) -> Vec<AwEvent>
+    where
+        F: FnMut(Option<&str>, usize) -> Vec<AwEvent>,
+    {
+        let mut all_events = Vec::new();
+        let mut offset_cursor = initial_cursor;
+
+        for page in 0..max_pages {
+            let events = fetch(offset_cursor.as_deref(), page_size);
+            let count = events.len();
+            if count == 0 {
+                break;
+            }
+            if let Some(last) = events.last() {
+                offset_cursor = Some(advance_timestamp_1ms(&last.timestamp));
+            }
+            all_events.extend(events);
+            if count < page_size {
+                break;
+            }
+            if page == max_pages - 1 {
+                // max pages reached
+            }
+        }
+        all_events
+    }
 
     fn make_event(id: i64, timestamp: &str) -> AwEvent {
         AwEvent {
