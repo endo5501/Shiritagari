@@ -203,8 +203,6 @@ pub fn run() {
                 let mut question_queue = QuestionQueue::new();
 
                 loop {
-                    tokio::time::sleep(poller.interval_duration()).await;
-
                     debug!("Polling cycle started");
 
                     if let Some(result) = poller.poll_once().await {
@@ -307,6 +305,8 @@ pub fn run() {
                     } else {
                         debug!("Cycle skipped: poll_once returned None");
                     }
+
+                    tokio::time::sleep(poller.interval_duration()).await;
                 }
             });
 
