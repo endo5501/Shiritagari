@@ -102,8 +102,6 @@ body {
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
-  /* Minimal opacity to ensure macOS transparent window receives mouse events */
-  background: rgba(0, 0, 0, 0.01);
 }
 
 .mascot-drag-area:active {
