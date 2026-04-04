@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use log::debug;
 use reqwest::Client;
 use serde_json::json;
 
@@ -80,6 +81,7 @@ impl OpenAiProvider {
 impl LlmProvider for OpenAiProvider {
     async fn infer(&self, input: &InferenceInput) -> Result<InferenceOutput, String> {
         let prompt = self.build_inference_prompt(input);
+        debug!("Prompt size: {} chars", prompt.len());
         let messages = vec![json!({"role": "user", "content": prompt})];
         let response_text = self.call_api(&messages).await?;
 
