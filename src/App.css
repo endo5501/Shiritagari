@@ -26,12 +26,14 @@ body {
 /* ── Bubble (shared) ── */
 .bubble {
   max-width: 240px;
+  max-height: 120px;
   padding: 10px 14px;
   margin-bottom: 4px;
   font-size: 13px;
   line-height: 1.5;
   word-break: break-word;
   position: relative;
+  overflow-y: auto;
 }
 
 .bubble-text {

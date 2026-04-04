@@ -52,23 +52,26 @@ shiritagari-question: string  (既存、変更なし)
 React状態を以下のように再設計する:
 
 ```typescript
-type BubbleMode = "idle" | "thinking" | "asking";
-
 // 状態
 thought: string | null       // 最新の思考テキスト
 question: string | null      // 未回答の質問テキスト
-bubbleMode: BubbleMode       // 吹き出しの表示モード
 input: string                // 入力欄のテキスト
 isLoading: boolean           // 送信中フラグ
+
+// 導出値（stateではない）
+isAsking = question !== null  // 質問中かどうか
+bubbleText = isAsking ? question : thought
+bubbleClass = isAsking ? "speech" : "thought"
 ```
+
+`bubbleMode` は独立stateとせず `question`/`thought` から導出する。stale closure問題を回避し、状態の不整合を防ぐ。
 
 **状態遷移**:
 ```
-idle ──[shiritagari-thought]──▶ thinking
-thinking ──[shiritagari-thought]──▶ thinking (テキスト更新)
-thinking ──[shiritagari-question]──▶ asking (最前面浮上)
-asking ──[回答送信]──▶ thinking or idle
-idle ──[shiritagari-question]──▶ asking
+question=null, thought=null ──[shiritagari-thought]──▶ thought="..."
+thought="..." ──[shiritagari-thought]──▶ thought更新
+thought="..." ──[shiritagari-question]──▶ question="..." (最前面浮上)
+question="..." ──[回答送信]──▶ question=null (thoughtは維持)
 ```
 
 ### 4. 吹き出しの視覚的区別
@@ -80,11 +83,11 @@ idle ──[shiritagari-question]──▶ asking
 
 CSSの `::after` 疑似要素で尻尾を表現する。
 
-### 5. ドラッグ移動: Tauri ネイティブ機能を利用
+### 5. ドラッグ移動: startDragging API を利用
 
-キャラクター画像の `<img>` 要素に `data-tauri-drag-region` 属性を付与する。Tauriが自動的にドラッグハンドルとして認識し、ウィンドウ移動を処理する。
+キャラクター画像を `<div>` でラップし、`onMouseDown` で `getCurrentWindow().startDragging()` を呼び出す。`<img>` はreplaced elementのため `data-tauri-drag-region` が直接動作せず、また透過ウィンドウでは同属性の挙動が不安定なため、明示的なAPI呼び出しを採用。
 
-追加のJavaScript実装は不要。
+capabilities に `core:window:allow-start-dragging` 権限の追加が必要。
 
 ### 6. 最前面制御: Rust側からの `set_always_on_top`
 
