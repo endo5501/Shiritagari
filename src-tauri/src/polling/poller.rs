@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
 use super::aw_client::{AwClient, AwEvent};
+use super::timestamp::advance_timestamp_1ms;
 use crate::memory::Database;
 
 pub struct Poller {
@@ -70,11 +71,13 @@ impl Poller {
         };
 
         // Fetch ALL events since cursor (paginate until exhausted)
-        let mut all_events = Vec::new();
+        // Collect events synchronously via a buffer filled by async calls
         let page_size = 100;
-        let mut offset_cursor = cursor.clone();
+        let max_pages = 50;
+        let mut pages: Vec<Vec<AwEvent>> = Vec::new();
 
-        loop {
+        let mut offset_cursor = cursor.clone();
+        for page in 0..max_pages {
             let events = self
                 .aw_client
                 .get_events(&window_bucket, offset_cursor.as_deref(), Some(page_size))
@@ -86,18 +89,26 @@ impl Poller {
                 break;
             }
 
-            // Update cursor for next page to the last event's timestamp
             if let Some(last) = events.last() {
-                offset_cursor = Some(last.timestamp.clone());
+                offset_cursor = Some(advance_timestamp_1ms(&last.timestamp));
             }
 
-            all_events.extend(events);
+            pages.push(events);
 
-            // If we got fewer than page_size, we've exhausted the results
             if count < page_size {
                 break;
             }
+
+            if page == max_pages - 1 {
+                let total: usize = pages.iter().map(|p| p.len()).sum();
+                warn!(
+                    "Pagination reached maximum of {} pages ({} events). Continuing with fetched events.",
+                    max_pages, total
+                );
+            }
         }
+
+        let all_events: Vec<AwEvent> = pages.into_iter().flatten().collect();
 
         debug!(
             "Fetched {} events from ActivityWatch (cursor: {})",
@@ -192,5 +203,166 @@ impl Poller {
                 info!("ActivityWatch unavailable, will retry next interval");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Test-only pagination helper that mirrors the logic in `poll_once()`.
+    fn paginate_events<F>(
+        initial_cursor: Option<String>,
+        page_size: usize,
+        max_pages: usize,
+        mut fetch: F,
+    ) -> Vec<AwEvent>
+    where
+        F: FnMut(Option<&str>, usize) -> Vec<AwEvent>,
+    {
+        let mut all_events = Vec::new();
+        let mut offset_cursor = initial_cursor;
+
+        for page in 0..max_pages {
+            let events = fetch(offset_cursor.as_deref(), page_size);
+            let count = events.len();
+            if count == 0 {
+                break;
+            }
+            if let Some(last) = events.last() {
+                offset_cursor = Some(advance_timestamp_1ms(&last.timestamp));
+            }
+            all_events.extend(events);
+            if count < page_size {
+                break;
+            }
+            if page == max_pages - 1 {
+                // max pages reached
+            }
+        }
+        all_events
+    }
+
+    fn make_event(id: i64, timestamp: &str) -> AwEvent {
+        AwEvent {
+            id: Some(id),
+            timestamp: timestamp.to_string(),
+            duration: 1.0,
+            data: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_paginate_cursor_advances_between_pages() {
+        let mut cursors_received: Vec<Option<String>> = Vec::new();
+
+        let events = paginate_events(
+            Some("2026-04-04T01:00:00.000+00:00".to_string()),
+            2, // page_size
+            50,
+            |cursor, _page_size| {
+                cursors_received.push(cursor.map(|s| s.to_string()));
+                match cursors_received.len() {
+                    1 => vec![
+                        make_event(1, "2026-04-04T01:00:00.100+00:00"),
+                        make_event(2, "2026-04-04T01:00:00.200+00:00"),
+                    ],
+                    2 => vec![
+                        make_event(3, "2026-04-04T01:00:00.300+00:00"),
+                    ],
+                    _ => vec![],
+                }
+            },
+        );
+
+        assert_eq!(events.len(), 3);
+        // First call uses initial cursor
+        assert_eq!(cursors_received[0], Some("2026-04-04T01:00:00.000+00:00".to_string()));
+        // Second call uses last event's timestamp + 1ms
+        assert_eq!(cursors_received[1], Some("2026-04-04T01:00:00.201+00:00".to_string()));
+    }
+
+    #[test]
+    fn test_paginate_no_duplicate_events_between_pages() {
+        let events = paginate_events(
+            Some("2026-04-04T01:00:00.000+00:00".to_string()),
+            2,
+            50,
+            |cursor, _page_size| {
+                match cursor {
+                    Some(c) if c == "2026-04-04T01:00:00.000+00:00" => vec![
+                        make_event(1, "2026-04-04T01:00:00.100+00:00"),
+                        make_event(2, "2026-04-04T01:00:00.200+00:00"),
+                    ],
+                    Some(c) if c == "2026-04-04T01:00:00.201+00:00" => vec![
+                        // Event 2 should NOT appear here because cursor advanced past it
+                        make_event(3, "2026-04-04T01:00:00.300+00:00"),
+                    ],
+                    _ => vec![],
+                }
+            },
+        );
+
+        let ids: Vec<i64> = events.iter().filter_map(|e| e.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_paginate_stops_at_max_pages() {
+        let mut call_count = 0;
+
+        let events = paginate_events(
+            Some("2026-04-04T01:00:00.000+00:00".to_string()),
+            2,
+            3, // max 3 pages
+            |_cursor, _page_size| {
+                call_count += 1;
+                // Always return full page to simulate endless data
+                vec![
+                    make_event(call_count * 2 - 1, &format!("2026-04-04T01:00:{:02}.000+00:00", call_count)),
+                    make_event(call_count * 2, &format!("2026-04-04T01:00:{:02}.500+00:00", call_count)),
+                ]
+            },
+        );
+
+        assert_eq!(call_count, 3, "Should stop after max_pages iterations");
+        assert_eq!(events.len(), 6, "Should have collected events from all 3 pages");
+    }
+
+    #[test]
+    fn test_paginate_stops_on_empty_response() {
+        let mut call_count = 0;
+
+        let events = paginate_events(
+            None,
+            100,
+            50,
+            |_cursor, _page_size| {
+                call_count += 1;
+                vec![]
+            },
+        );
+
+        assert_eq!(call_count, 1);
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn test_paginate_stops_on_partial_page() {
+        let mut call_count = 0;
+
+        let events = paginate_events(
+            None,
+            100,
+            50,
+            |_cursor, _page_size| {
+                call_count += 1;
+                vec![make_event(1, "2026-04-04T01:00:00.000+00:00")]
+            },
+        );
+
+        assert_eq!(call_count, 1, "Should stop after partial page");
+        assert_eq!(events.len(), 1);
     }
 }
