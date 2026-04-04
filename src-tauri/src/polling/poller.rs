@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::time::{interval, Duration};
 
 use super::aw_client::{AwClient, AwEvent};
-use super::timestamp::advance_timestamp_1ms;
+use super::timestamp::{advance_timestamp_1ms, effective_start};
 use crate::memory::Database;
 
 pub struct Poller {
@@ -64,19 +64,41 @@ impl Poller {
             debug!("User is active (not AFK)");
         }
 
-        // Get cursor for window bucket
+        // Get cursor for window bucket and apply time limit
         let cursor = {
             let db = self.db.lock().unwrap();
             db.get_cursor(&window_bucket).ok().flatten()
         };
 
-        // Fetch ALL events since cursor (paginate until exhausted)
-        // Collect events synchronously via a buffer filled by async calls
+        let lookback_minutes = 30;
+        let start = effective_start(cursor.as_deref(), chrono::Utc::now(), lookback_minutes);
+
+        // If time limit was applied (start differs from cursor), advance cursor
+        let cursor_skipped = cursor.as_deref() != Some(&start);
+        if cursor_skipped {
+            info!(
+                "Skipping old events: cursor {} -> {} (lookback {}min)",
+                cursor.as_deref().unwrap_or("none"),
+                start,
+                lookback_minutes
+            );
+            let db = self.db.lock().unwrap();
+            db.update_cursor(&window_bucket, &start).ok();
+        }
+
+        debug!(
+            "Effective start: {} (cursor: {}, lookback: {}min)",
+            start,
+            cursor.as_deref().unwrap_or("none"),
+            lookback_minutes
+        );
+
+        // Fetch events since effective start (paginate until exhausted)
         let page_size = 100;
-        let max_pages = 50;
+        let max_pages = 10;
         let mut pages: Vec<Vec<AwEvent>> = Vec::new();
 
-        let mut offset_cursor = cursor.clone();
+        let mut offset_cursor = Some(start);
         for page in 0..max_pages {
             let events = self
                 .aw_client

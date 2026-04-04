@@ -56,12 +56,7 @@ impl OpenAiProvider {
 // Reuse the same inference prompt building logic
 impl OpenAiProvider {
     fn build_inference_prompt(&self, input: &InferenceInput) -> String {
-        // Delegate to a shared helper - for now, duplicate the logic
-        let events_text: Vec<String> = input
-            .events
-            .iter()
-            .map(|e| format!("- {} | {} ({}秒)", e.app, e.title, e.duration_seconds))
-            .collect();
+        let events_text = format_grouped_events(&input.events);
 
         format!(
             r#"以下のユーザのPC操作ログから、ユーザが何をしているか推測してください。
@@ -76,7 +71,7 @@ impl OpenAiProvider {
   "should_ask": true/false,
   "suggested_question": "質問文またはnull"
 }}"#,
-            events_text.join("\n"),
+            events_text,
         )
     }
 }

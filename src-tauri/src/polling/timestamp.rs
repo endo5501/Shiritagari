@@ -1,4 +1,21 @@
-use chrono::{DateTime, Duration};
+use chrono::{DateTime, Duration, Utc};
+
+/// Determine the effective start timestamp for event fetching.
+///
+/// Returns the later of `cursor` and `now - lookback_minutes`.
+/// If cursor is missing or unparsable, uses the time-based limit.
+pub fn effective_start(cursor: Option<&str>, now: DateTime<Utc>, lookback_minutes: u64) -> String {
+    let time_limit = now - Duration::minutes(lookback_minutes as i64);
+    let time_limit_str = time_limit.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
+
+    match cursor {
+        Some(c) => match DateTime::parse_from_rfc3339(c) {
+            Ok(cursor_dt) if cursor_dt > time_limit => c.to_string(),
+            _ => time_limit_str,
+        },
+        None => time_limit_str,
+    }
+}
 
 /// Advance an ISO 8601 timestamp by 1 millisecond.
 ///
@@ -76,5 +93,47 @@ mod tests {
     fn test_advance_missing_offset_returns_original() {
         let result = advance_timestamp_1ms("2026-04-04T01:58:46");
         assert_eq!(result, "2026-04-04T01:58:46");
+    }
+
+    #[test]
+    fn test_effective_start_no_cursor_returns_time_limit() {
+        let now = DateTime::parse_from_rfc3339("2026-04-04T04:00:00.000+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let result = effective_start(None, now, 30);
+        // 30 minutes before now
+        assert_eq!(result, "2026-04-04T03:30:00.000+00:00");
+    }
+
+    #[test]
+    fn test_effective_start_recent_cursor_returns_cursor() {
+        let now = DateTime::parse_from_rfc3339("2026-04-04T04:00:00.000+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let cursor = Some("2026-04-04T03:50:00.000+00:00".to_string());
+        let result = effective_start(cursor.as_deref(), now, 30);
+        // Cursor is within 30 minutes, so use cursor
+        assert_eq!(result, "2026-04-04T03:50:00.000+00:00");
+    }
+
+    #[test]
+    fn test_effective_start_old_cursor_returns_time_limit() {
+        let now = DateTime::parse_from_rfc3339("2026-04-04T04:00:00.000+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let cursor = Some("2026-04-04T01:00:00.000+00:00".to_string());
+        let result = effective_start(cursor.as_deref(), now, 30);
+        // Cursor is 3 hours old, so use time limit
+        assert_eq!(result, "2026-04-04T03:30:00.000+00:00");
+    }
+
+    #[test]
+    fn test_effective_start_malformed_cursor_returns_time_limit() {
+        let now = DateTime::parse_from_rfc3339("2026-04-04T04:00:00.000+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let cursor = Some("not-a-timestamp".to_string());
+        let result = effective_start(cursor.as_deref(), now, 30);
+        assert_eq!(result, "2026-04-04T03:30:00.000+00:00");
     }
 }
