@@ -53,7 +53,7 @@ impl ClaudeProvider {
 
 以下のJSON形式で回答してください:
 {{
-  "inference": "ユーザが何をしているかの推測",
+  "inference": "ユーザが何をしているかの推測（デスクトップマスコットの吹き出しに表示します。短く、独り言風に、40文字以内で。例:「Reactのコンポーネントを書いてるな...」）",
   "confidence": 0.0〜1.0の確信度,
   "should_ask": true/false（ユーザに質問すべきか）,
   "suggested_question": "質問文（should_askがtrueの場合）"

@@ -84,7 +84,12 @@ async fn send_message(message: String, state: State<'_, AppState>) -> Result<Str
 }
 
 #[tauri::command]
-async fn answer_question(answer: String, question_context: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn answer_question(
+    answer: String,
+    question_context: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
     let db = state.db.lock().unwrap();
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -98,6 +103,11 @@ async fn answer_question(answer: String, question_context: String, state: State<
         tags: vec![],
     })
     .map_err(|e| format!("Failed to save episode: {}", e))?;
+
+    // Restore normal window state after answering
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.set_always_on_top(false).ok();
+    }
 
     Ok(())
 }
@@ -210,6 +220,11 @@ pub fn run() {
                         if let Some(pending) = question_queue.check_afk_return(result.is_afk) {
                             info!("User returned from AFK, emitting pending question");
                             app_handle.emit("shiritagari-question", &pending).ok();
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                window.show().ok();
+                                window.set_always_on_top(true).ok();
+                                window.set_focus().ok();
+                            }
                         }
 
                         if result.window_events.is_empty() {
@@ -246,6 +261,11 @@ pub fn run() {
                                         Some(q) => {
                                             info!("Emitting re-ask question to frontend");
                                             app_handle.emit("shiritagari-question", &q).ok();
+                                            if let Some(window) = app_handle.get_webview_window("main") {
+                                                window.show().ok();
+                                                window.set_always_on_top(true).ok();
+                                                window.set_focus().ok();
+                                            }
                                         }
                                         None => {
                                             debug!("Re-ask question queued (user is AFK)");
@@ -262,6 +282,13 @@ pub fn run() {
                                     Ok(output) => {
                                         let elapsed = llm_start.elapsed();
                                         info!("LLM inference completed in {:.1}s", elapsed.as_secs_f64());
+
+                                        // Emit thought to frontend for mascot bubble display
+                                        app_handle.emit("shiritagari-thought", &serde_json::json!({
+                                            "inference": output.inference,
+                                            "confidence": output.confidence,
+                                        })).ok();
+
                                         // Step 3: Sync - save results (holds lock briefly)
                                         let ir = {
                                             let db = db_clone.lock().unwrap();
@@ -272,6 +299,11 @@ pub fn run() {
                                                 Some(q) => {
                                                     info!("Emitting question to frontend");
                                                     app_handle.emit("shiritagari-question", &q).ok();
+                                                    if let Some(window) = app_handle.get_webview_window("main") {
+                                                        window.show().ok();
+                                                        window.set_always_on_top(true).ok();
+                                                        window.set_focus().ok();
+                                                    }
                                                 }
                                                 None => {
                                                     debug!("Question queued (user is AFK)");

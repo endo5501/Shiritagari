@@ -32,7 +32,7 @@ impl OllamaProvider {
 
 以下のJSON形式のみで回答してください（説明不要）:
 {{
-  "inference": "ユーザが何をしているかの推測",
+  "inference": "ユーザが何をしているかの推測（デスクトップマスコットの吹き出しに表示します。短く、独り言風に、40文字以内で。例:「Reactのコンポーネントを書いてるな...」）",
   "confidence": 0.0〜1.0の確信度,
   "should_ask": true/false,
   "suggested_question": "質問文またはnull"

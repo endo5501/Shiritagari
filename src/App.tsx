@@ -1,78 +1,73 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
-interface Message {
-  role: "user" | "assistant" | "system";
-  content: string;
-  isQuestion?: boolean;
+type BubbleMode = "idle" | "thinking" | "asking";
+
+interface ThoughtPayload {
+  inference: string;
+  confidence: number;
 }
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [thought, setThought] = useState<string | null>(null);
+  const [question, setQuestion] = useState<string | null>(null);
+  const [bubbleMode, setBubbleMode] = useState<BubbleMode>("idle");
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const composingRef = useRef(false);
 
   useEffect(() => {
-    const unlisten = listen<string>("shiritagari-question", (event) => {
-      setPendingQuestion(event.payload);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: event.payload, isQuestion: true },
-      ]);
-    });
+    const unlistenThought = listen<ThoughtPayload>(
+      "shiritagari-thought",
+      (event) => {
+        setThought(event.payload.inference);
+        if (bubbleMode !== "asking") {
+          setBubbleMode("thinking");
+        }
+      }
+    );
+
+    const unlistenQuestion = listen<string>(
+      "shiritagari-question",
+      (event) => {
+        setQuestion(event.payload);
+        setBubbleMode("asking");
+      }
+    );
 
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenThought.then((fn) => fn());
+      unlistenQuestion.then((fn) => fn());
     };
   }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
 
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setInput("");
     setIsLoading(true);
 
     try {
-      if (pendingQuestion) {
-        // This is an answer to a Shiritagari question — save as episode
+      if (question && bubbleMode === "asking") {
         await invoke("answer_question", {
           answer: trimmed,
-          questionContext: pendingQuestion,
+          questionContext: question,
         });
-        setPendingQuestion(null);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "ありがとうございます！覚えておきます。" },
-        ]);
+        setQuestion(null);
+        setBubbleMode(thought ? "thinking" : "idle");
       } else {
-        // Regular chat message
         const response = await invoke<string>("send_message", {
           message: trimmed,
         });
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: response },
-        ]);
+        setThought(response);
+        setBubbleMode("thinking");
       }
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: `Error: ${err}`,
-        },
-      ]);
+    } catch {
+      // Error handling - stay in current mode
     } finally {
       setIsLoading(false);
     }
@@ -89,51 +84,59 @@ function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !composingRef.current) {
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.nativeEvent.isComposing &&
+      !composingRef.current
+    ) {
       e.preventDefault();
       handleSend();
     }
   };
 
+  const bubbleText =
+    bubbleMode === "asking" ? question : bubbleMode === "thinking" ? thought : null;
+
   return (
-    <div className="chat-container">
-      <div className="chat-header">
-        <h1>Shiritagari</h1>
-        {pendingQuestion && (
-          <span className="pending-indicator">質問に回答待ち</span>
-        )}
+    <div className="mascot-container">
+      {bubbleText && (
+        <div
+          className={`bubble ${bubbleMode === "asking" ? "speech" : "thought"}`}
+          data-testid="bubble"
+        >
+          <div className="bubble-text">{bubbleText}</div>
+          <div className="bubble-tail" />
+        </div>
+      )}
+
+      <div
+        className="mascot-drag-area"
+        onMouseDown={() => getCurrentWindow().startDragging()}
+      >
+        <img
+          src="/default-mascot.png"
+          alt="mascot"
+          className="mascot-image"
+          draggable={false}
+        />
       </div>
-      <div className="chat-messages">
-        {messages.length === 0 && (
-          <div className="empty-state">
-            Shiritagariが動作しています。質問があれば聞いてきます。
-          </div>
-        )}
-        {messages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}${msg.isQuestion ? " question" : ""}`}>
-            <div className="message-bubble">{msg.content}</div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="message assistant">
-            <div className="message-bubble loading">...</div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-      <div className="chat-input">
+
+      <div className="mascot-input">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
-          placeholder={pendingQuestion ? "質問に回答..." : "メッセージを入力..."}
+          placeholder={
+            bubbleMode === "asking" ? "質問に回答..." : "メッセージを入力..."
+          }
           rows={1}
           disabled={isLoading}
         />
         <button onClick={handleSend} disabled={isLoading || !input.trim()}>
-          {pendingQuestion ? "回答" : "送信"}
+          {bubbleMode === "asking" ? "回答" : "送信"}
         </button>
       </div>
     </div>

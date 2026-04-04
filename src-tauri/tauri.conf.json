@@ -10,15 +10,17 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
         "title": "Shiritagari",
-        "width": 400,
-        "height": 600,
-        "resizable": true,
+        "width": 300,
+        "height": 500,
+        "resizable": false,
         "visible": true,
-        "decorations": true
+        "decorations": false,
+        "transparent": true
       }
     ],
     "security": {
