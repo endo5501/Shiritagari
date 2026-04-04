@@ -73,17 +73,14 @@ impl Poller {
         let lookback_minutes = 30;
         let start = effective_start(cursor.as_deref(), chrono::Utc::now(), lookback_minutes);
 
-        // If time limit was applied (start differs from cursor), advance cursor
-        let cursor_skipped = cursor.as_deref() != Some(&start);
-        if cursor_skipped {
+        // Log if time limit was applied (cursor skipped forward)
+        if cursor.as_deref() != Some(&start) {
             info!(
                 "Skipping old events: cursor {} -> {} (lookback {}min)",
                 cursor.as_deref().unwrap_or("none"),
                 start,
                 lookback_minutes
             );
-            let db = self.db.lock().unwrap();
-            db.update_cursor(&window_bucket, &start).ok();
         }
 
         debug!(
@@ -95,7 +92,7 @@ impl Poller {
 
         // Fetch events since effective start (paginate until exhausted)
         let page_size = 100;
-        let max_pages = 10;
+        let max_pages = 50;
         let mut pages: Vec<Vec<AwEvent>> = Vec::new();
 
         let mut offset_cursor = Some(start);
