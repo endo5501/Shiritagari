@@ -94,6 +94,9 @@ decay_rate = 0.99              # パターンの信頼度減衰率（日次）
 threshold_silent = 0.8         # これ以上なら質問しない
 threshold_re_ask = 0.5         # 既存パターンの再確認閾値
 threshold_soft_delete = 0.3    # パターンのソフトデリート閾値
+
+[mascot]
+character_image = "/path/to/character.png"  # キャラクター画像（透過PNG推奨、未指定時はデフォルト画像）
 ```
 
 ## データ保存場所
@@ -132,7 +135,7 @@ src-tauri/src/
     └── redaction.rs   #   プライバシー保護（blocklist・マスキング）
 
 src/                   # React フロントエンド
-├── App.tsx            #   チャットウィンドウUI
+├── App.tsx            #   デスクトップマスコットUI
 └── App.css            #   スタイル
 ```
 
