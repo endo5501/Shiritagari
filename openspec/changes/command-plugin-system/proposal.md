@@ -17,11 +17,11 @@
 - `timer-command`: `/timer <時間>` でワンショットタイマーを設定し、時間経過後に吹き出しで通知する機能
 
 ### Modified Capabilities
-- `chat-interface`: `send_message` が `/` で始まるメッセージをコマンドとして処理し、マッチしなければ従来のチャット処理にフォールバックする
+- `chat-interface`: `send_message` が `/` で始まるメッセージをコマンドとして処理する。未知のコマンドはエラーメッセージを返す（LLM チャットにはフォールバックしない）
 
 ## Impact
 
 - `src-tauri/src/lib.rs`: `send_message` にコマンドルーティングの分岐を追加、`AppState` に `CommandRouter` を保持
 - `src-tauri/src/commands/` モジュールを新設（types.rs, router.rs, timer.rs, help.rs）
-- フロントエンド変更なし（入力欄はそのまま、バックエンド側で分岐）
+- `src/App.tsx`: コマンド結果の表示対応（`send_message` の戻り値をそのまま thought bubble に表示する既存動作で対応可能。エラー時は catch して bubble 表示に変更）
 - 新規依存: なし（tokio::spawn + tokio::time::sleep で十分）
