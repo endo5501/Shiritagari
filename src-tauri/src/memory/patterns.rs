@@ -132,6 +132,25 @@ impl Database {
         Ok(count)
     }
 
+    pub fn find_exact_active_pattern(&self, app: &str, title_contains: &str) -> Result<Option<Pattern>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, trigger_app, trigger_title_contains, trigger_time_range, trigger_day_of_week,
+                    meaning, confidence, last_confirmed, deleted_at, created_at
+             FROM patterns
+             WHERE deleted_at IS NULL
+               AND trigger_app = ?1
+               AND trigger_title_contains = ?2
+             LIMIT 1",
+        )?;
+
+        let mut rows = stmt.query_map(params![app, title_contains], Pattern::from_row)?;
+
+        match rows.next() {
+            Some(Ok(p)) => Ok(Some(p)),
+            _ => Ok(None),
+        }
+    }
+
     pub fn count_active_patterns(&self) -> Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM patterns WHERE deleted_at IS NULL",

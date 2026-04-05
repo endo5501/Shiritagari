@@ -75,6 +75,33 @@ impl Database {
         specs.collect()
     }
 
+    /// Returns promotion candidates: Vec<(app, title, latest_inference)>
+    /// Groups speculations by (observed_app, observed_title) and returns
+    /// groups with count >= min_count, along with the latest inference text.
+    pub fn get_speculation_promotion_candidates(&self, min_count: i64, now: &str) -> Result<Vec<(String, String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.observed_app, s.observed_title, s.inference
+             FROM speculations s
+             INNER JOIN (
+                 SELECT observed_app, observed_title, MAX(id) AS max_id
+                 FROM speculations
+                 WHERE expires_at > ?2
+                 GROUP BY observed_app, observed_title
+                 HAVING COUNT(*) >= ?1
+             ) g ON s.id = g.max_id",
+        )?;
+
+        let rows = stmt.query_map(params![min_count, now], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+
+        rows.collect()
+    }
+
     pub fn delete_expired_speculations(&self, now: &str) -> Result<usize> {
         let count = self.conn.execute(
             "DELETE FROM speculations WHERE expires_at <= ?1",
@@ -114,6 +141,81 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].observed_app, "Terminal");
         assert!(!specs[0].asked_user);
+    }
+
+    fn create_speculations_for_app(db: &Database, app: &str, title: &str, count: usize) {
+        for i in 0..count {
+            db.create_speculation(&NewSpeculation {
+                timestamp: format!("2026-04-0{}T10:{:02}:00", (i / 6) + 1, i % 60),
+                observed_app: app.to_string(),
+                observed_title: title.to_string(),
+                inference: format!("inference {} for {}", i, app),
+                confidence: 0.7,
+                asked_user: false,
+                matched_pattern_id: None,
+                expires_at: "2026-04-10T10:00:00".to_string(),
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn test_get_promotion_candidates_above_threshold() {
+        let db = setup();
+        create_speculations_for_app(&db, "VS Code", "main.rs", 6);
+        create_speculations_for_app(&db, "Chrome", "docs", 3); // below threshold
+
+        let now = "2026-04-05T10:00:00";
+        let candidates = db.get_speculation_promotion_candidates(6, now).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "VS Code");
+        assert_eq!(candidates[0].1, "main.rs");
+        // Latest inference should be the last one created
+        assert!(candidates[0].2.contains("inference 5"));
+    }
+
+    #[test]
+    fn test_get_promotion_candidates_empty() {
+        let db = setup();
+        create_speculations_for_app(&db, "Chrome", "docs", 5); // below threshold
+
+        let now = "2026-04-05T10:00:00";
+        let candidates = db.get_speculation_promotion_candidates(6, now).unwrap();
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_get_promotion_candidates_multiple_groups() {
+        let db = setup();
+        create_speculations_for_app(&db, "VS Code", "main.rs", 7);
+        create_speculations_for_app(&db, "Terminal", "zsh", 6);
+
+        let now = "2026-04-05T10:00:00";
+        let candidates = db.get_speculation_promotion_candidates(6, now).unwrap();
+        assert_eq!(candidates.len(), 2);
+    }
+
+    #[test]
+    fn test_get_promotion_candidates_excludes_expired() {
+        let db = setup();
+        // Create 6 speculations that are already expired
+        for i in 0..6 {
+            db.create_speculation(&NewSpeculation {
+                timestamp: format!("2026-03-01T10:{:02}:00", i),
+                observed_app: "VS Code".to_string(),
+                observed_title: "old.rs".to_string(),
+                inference: format!("old inference {}", i),
+                confidence: 0.7,
+                asked_user: false,
+                matched_pattern_id: None,
+                expires_at: "2026-03-04T10:00:00".to_string(), // already expired
+            })
+            .unwrap();
+        }
+
+        let now = "2026-04-05T10:00:00";
+        let candidates = db.get_speculation_promotion_candidates(6, now).unwrap();
+        assert!(candidates.is_empty());
     }
 
     #[test]
