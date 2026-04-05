@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -99,7 +99,7 @@ impl Default for PrivacyConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MascotConfig {
     #[serde(default)]
     pub character_image: Option<String>,
@@ -231,6 +231,19 @@ decay_rate = 0.98
     fn test_default_mascot_config() {
         let config = AppConfig::default();
         assert!(config.mascot.character_image.is_none());
+    }
+
+    #[test]
+    fn test_mascot_config_serializes_to_json() {
+        let config = MascotConfig {
+            character_image: Some("/path/to/char.png".to_string()),
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["character_image"], "/path/to/char.png");
+
+        let default_config = MascotConfig::default();
+        let json = serde_json::to_value(&default_config).unwrap();
+        assert!(json["character_image"].is_null());
     }
 
     #[test]
