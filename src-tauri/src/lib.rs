@@ -1,9 +1,13 @@
+pub mod commands;
 pub mod config;
+pub mod events;
 pub mod inference;
 pub mod memory;
 pub mod polling;
 pub mod providers;
 
+use commands::router::CommandRouter;
+use commands::types::CommandContext;
 use config::AppConfig;
 use inference::InferenceEngine;
 use log::{debug, info, warn};
@@ -16,21 +20,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{
-    tray::TrayIconBuilder, Emitter, Manager, State,
+    tray::TrayIconBuilder, Manager, State,
     menu::{MenuBuilder, MenuItemBuilder},
 };
 
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub config: AppConfig,
+    pub command_router: Arc<CommandRouter>,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        window.show().ok();
-        window.set_always_on_top(true).ok();
-        window.set_focus().ok();
-    }
+    events::bring_window_to_front(app_handle);
 }
 
 #[tauri::command]
@@ -39,7 +40,22 @@ fn get_mascot_config(state: State<'_, AppState>) -> config::MascotConfig {
 }
 
 #[tauri::command]
-async fn send_message(message: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn send_message(
+    message: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    // Check for slash command
+    if message.trim_start().starts_with('/') {
+        let ctx = CommandContext {
+            app_handle,
+            db: state.db.clone(),
+            plugin_list: state.command_router.plugin_list(),
+        };
+        let result = state.command_router.dispatch(&message, &ctx).await?;
+        return Ok(result.response);
+    }
+
     // Collect context from DB in a non-async block to avoid Send issues
     let context = {
         let db = state.db.lock().unwrap();
@@ -149,9 +165,15 @@ pub fn run() {
     let db = Database::open(&db_path).expect("Failed to open database");
     let db = Arc::new(Mutex::new(db));
 
+    let mut command_router = CommandRouter::new();
+    command_router.register(Box::new(commands::help::HelpPlugin));
+    command_router.register(Box::new(commands::timer::TimerPlugin));
+    let command_router = Arc::new(command_router);
+
     let app_state = AppState {
         db: db.clone(),
         config: config.clone(),
+        command_router,
     };
 
     tauri::Builder::default()
@@ -212,13 +234,13 @@ pub fn run() {
                         !db.is_confirmed(&confirmation_key).unwrap_or(true)
                     };
                     if needs_confirmation {
-                        app_handle.emit(
-                            "shiritagari-question",
+                        events::emit_question(
+                            &app_handle,
                             &format!(
                                 "外部LLM API ({}) を推論に使用します。ウィンドウタイトル等の操作データが外部サーバーに送信されます。よろしいですか？（このメッセージは初回のみ表示されます）",
                                 inference_provider_name
                             ),
-                        ).ok();
+                        );
                         let db = db_clone.lock().unwrap();
                         db.set_confirmed(&confirmation_key).ok();
                     }
@@ -233,7 +255,7 @@ pub fn run() {
                         // Check if user returned from AFK and emit any pending question
                         if let Some(pending) = question_queue.check_afk_return(result.is_afk) {
                             info!("User returned from AFK, emitting pending question");
-                            app_handle.emit("shiritagari-question", &pending).ok();
+                            events::emit_question(&app_handle, &pending);
                             bring_window_to_front(&app_handle);
                         }
 
@@ -270,12 +292,8 @@ pub fn run() {
                                     match question_queue.process_question(question.clone(), result.is_afk) {
                                         Some(q) => {
                                             info!("Emitting re-ask question to frontend");
-                                            app_handle.emit("shiritagari-question", &q).ok();
-                                            if let Some(window) = app_handle.get_webview_window("main") {
-                                                window.show().ok();
-                                                window.set_always_on_top(true).ok();
-                                                window.set_focus().ok();
-                                            }
+                                            events::emit_question(&app_handle, &q);
+                                            bring_window_to_front(&app_handle);
                                         }
                                         None => {
                                             debug!("Re-ask question queued (user is AFK)");
@@ -293,11 +311,7 @@ pub fn run() {
                                         let elapsed = llm_start.elapsed();
                                         info!("LLM inference completed in {:.1}s", elapsed.as_secs_f64());
 
-                                        // Emit thought to frontend for mascot bubble display
-                                        app_handle.emit("shiritagari-thought", &serde_json::json!({
-                                            "inference": output.inference,
-                                            "confidence": output.confidence,
-                                        })).ok();
+                                        events::emit_thought(&app_handle, &output.inference, output.confidence);
 
                                         // Step 3: Sync - save results (holds lock briefly)
                                         let ir = {
@@ -308,12 +322,8 @@ pub fn run() {
                                             match question_queue.process_question(question.clone(), result.is_afk) {
                                                 Some(q) => {
                                                     info!("Emitting question to frontend");
-                                                    app_handle.emit("shiritagari-question", &q).ok();
-                                                    if let Some(window) = app_handle.get_webview_window("main") {
-                                                        window.show().ok();
-                                                        window.set_always_on_top(true).ok();
-                                                        window.set_focus().ok();
-                                                    }
+                                                    events::emit_question(&app_handle, &q);
+                                                    bring_window_to_front(&app_handle);
                                                 }
                                                 None => {
                                                     debug!("Question queued (user is AFK)");

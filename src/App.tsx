@@ -80,6 +80,7 @@ function App() {
       }
     } catch (err) {
       console.error("Failed to send message:", err);
+      setThought(String(err));
     } finally {
       setIsLoading(false);
     }
