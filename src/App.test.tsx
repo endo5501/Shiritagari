@@ -56,6 +56,30 @@ describe("Mascot UI", () => {
     expect(mockStartDragging).toHaveBeenCalled();
   });
 
+  test("uses custom character_image from config when available", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_mascot_config") {
+        return Promise.resolve({ character_image: "/custom/char.png" });
+      }
+      return Promise.resolve("mock response");
+    });
+    await renderApp();
+    const img = screen.getByAltText("mascot") as HTMLImageElement;
+    expect(img.src).toContain("/custom/char.png");
+  });
+
+  test("uses default mascot image when character_image is null", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_mascot_config") {
+        return Promise.resolve({ character_image: null });
+      }
+      return Promise.resolve("mock response");
+    });
+    await renderApp();
+    const img = screen.getByAltText("mascot") as HTMLImageElement;
+    expect(img.src).toContain("/default-mascot.png");
+  });
+
   test("renders input area with send button", async () => {
     await renderApp();
     const input = screen.getByPlaceholderText("メッセージを入力...");

@@ -15,10 +15,9 @@ body {
 }
 
 .mascot-container {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   align-items: center;
-  height: 100vh;
   background: transparent;
   padding: 8px;
 }

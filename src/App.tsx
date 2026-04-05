@@ -11,16 +11,31 @@ interface ThoughtPayload {
 
 const appWindow = getCurrentWindow();
 
+interface MascotConfig {
+  character_image: string | null;
+}
+
 function App() {
   const [thought, setThought] = useState<string | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [mascotImage, setMascotImage] = useState("/default-mascot.png");
   const composingRef = useRef(false);
 
   const isAsking = question !== null;
   const bubbleText = isAsking ? question : thought;
   const bubbleClass = isAsking ? "speech" : "thought";
+
+  useEffect(() => {
+    invoke<MascotConfig>("get_mascot_config").then((config) => {
+      if (config.character_image) {
+        setMascotImage(config.character_image);
+      }
+    }).catch((err) => {
+      console.error("Failed to load mascot config:", err);
+    });
+  }, []);
 
   useEffect(() => {
     const unlistenThought = listen<ThoughtPayload>(
@@ -109,7 +124,7 @@ function App() {
         onMouseDown={() => appWindow.startDragging()}
       >
         <img
-          src="/default-mascot.png"
+          src={mascotImage}
           alt="mascot"
           className="mascot-image"
           draggable={false}

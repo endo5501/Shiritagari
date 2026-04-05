@@ -34,6 +34,11 @@ fn bring_window_to_front(app_handle: &tauri::AppHandle) {
 }
 
 #[tauri::command]
+fn get_mascot_config(state: State<'_, AppState>) -> config::MascotConfig {
+    state.config.mascot.clone()
+}
+
+#[tauri::command]
 async fn send_message(message: String, state: State<'_, AppState>) -> Result<String, String> {
     // Collect context from DB in a non-async block to avoid Send issues
     let context = {
@@ -151,8 +156,9 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![send_message, answer_question])
+        .invoke_handler(tauri::generate_handler![get_mascot_config, send_message, answer_question])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Hide instead of closing so the app stays in system tray
