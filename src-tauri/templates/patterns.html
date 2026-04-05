@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block nav_patterns %}class="active"{% endblock %}
+
+{% block content %}
+<p class="count">Patterns ({{ total_count }}件)</p>
+
+{% if patterns.is_empty() %}
+<div class="empty-state">
+  まだパターンが学習されていません
+</div>
+{% else %}
+  {% for p in patterns %}
+  <div class="card">
+    <div class="card-header">
+      <h3>
+        <span class="badge badge-app">{{ p.trigger_app }}</span>
+        {% if !p.trigger_title_contains.is_empty() %}
+          &mdash; 「{{ p.trigger_title_contains }}」を含むタイトル
+        {% endif %}
+      </h3>
+      <span class="meta">{{ p.last_confirmed }}</span>
+    </div>
+    <div class="meaning">{{ p.meaning }}</div>
+    <div class="meta" style="margin-top: 8px;">
+      確信度:
+      <span class="confidence-bar">
+        <span class="confidence-fill {% if p.confidence >= 0.7 %}confidence-high{% else if p.confidence >= 0.4 %}confidence-mid{% else %}confidence-low{% endif %}"
+              style="width: {{ (p.confidence * 100.0)|fmt("{:.0}") }}%"></span>
+      </span>
+      {{ (p.confidence * 100.0)|fmt("{:.0}") }}%
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if total_pages > 1 %}
+  <div class="pagination">
+    {% if page > 1 %}
+      <a href="/?page={{ page - 1 }}">&laquo; 前へ</a>
+    {% else %}
+      <span class="disabled">&laquo; 前へ</span>
+    {% endif %}
+    <span class="current">{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+      <a href="/?page={{ page + 1 }}">次へ &raquo;</a>
+    {% else %}
+      <span class="disabled">次へ &raquo;</span>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -27,6 +27,24 @@ pub struct NewEpisode {
     pub tags: Vec<String>,
 }
 
+impl Episode {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Episode> {
+        let tags_str: String = row.get(7)?;
+        let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+        Ok(Episode {
+            id: row.get(0)?,
+            timestamp: row.get(1)?,
+            context_app: row.get(2)?,
+            context_title: row.get(3)?,
+            context_duration_minutes: row.get(4)?,
+            question: row.get(5)?,
+            answer: row.get(6)?,
+            tags,
+            created_at: row.get(8)?,
+        })
+    }
+}
+
 impl Database {
     pub fn create_episode(&self, episode: &NewEpisode) -> Result<i64> {
         let tags_json = serde_json::to_string(&episode.tags).unwrap_or_else(|_| "[]".to_string());
@@ -47,32 +65,7 @@ impl Database {
     }
 
     pub fn get_recent_episodes(&self, limit: usize) -> Result<Vec<Episode>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, timestamp, context_app, context_title, context_duration_minutes,
-                    question, answer, tags, created_at
-             FROM episodes
-             ORDER BY timestamp DESC
-             LIMIT ?1",
-        )?;
-
-        let episodes = stmt.query_map(params![limit as i64], |row| {
-            let tags_str: String = row.get(7)?;
-            let tags: Vec<String> =
-                serde_json::from_str(&tags_str).unwrap_or_default();
-            Ok(Episode {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                context_app: row.get(2)?,
-                context_title: row.get(3)?,
-                context_duration_minutes: row.get(4)?,
-                question: row.get(5)?,
-                answer: row.get(6)?,
-                tags,
-                created_at: row.get(8)?,
-            })
-        })?;
-
-        episodes.collect()
+        self.get_episodes_paginated(limit as i64, 0)
     }
 
     pub fn find_episodes_by_app(&self, app: &str) -> Result<Vec<Episode>> {
@@ -84,22 +77,7 @@ impl Database {
              ORDER BY timestamp DESC",
         )?;
 
-        let episodes = stmt.query_map(params![app], |row| {
-            let tags_str: String = row.get(7)?;
-            let tags: Vec<String> =
-                serde_json::from_str(&tags_str).unwrap_or_default();
-            Ok(Episode {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                context_app: row.get(2)?,
-                context_title: row.get(3)?,
-                context_duration_minutes: row.get(4)?,
-                question: row.get(5)?,
-                answer: row.get(6)?,
-                tags,
-                created_at: row.get(8)?,
-            })
-        })?;
+        let episodes = stmt.query_map(params![app], Episode::from_row)?;
 
         episodes.collect()
     }
@@ -114,22 +92,7 @@ impl Database {
              ORDER BY timestamp DESC",
         )?;
 
-        let episodes = stmt.query_map(params![pattern], |row| {
-            let tags_str: String = row.get(7)?;
-            let tags: Vec<String> =
-                serde_json::from_str(&tags_str).unwrap_or_default();
-            Ok(Episode {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                context_app: row.get(2)?,
-                context_title: row.get(3)?,
-                context_duration_minutes: row.get(4)?,
-                question: row.get(5)?,
-                answer: row.get(6)?,
-                tags,
-                created_at: row.get(8)?,
-            })
-        })?;
+        let episodes = stmt.query_map(params![pattern], Episode::from_row)?;
 
         episodes.collect()
     }
@@ -142,6 +105,28 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count as usize)
+    }
+
+    pub fn count_episodes(&self) -> Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM episodes",
+            [],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn get_episodes_paginated(&self, limit: i64, offset: i64) -> Result<Vec<Episode>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, timestamp, context_app, context_title, context_duration_minutes,
+                    question, answer, tags, created_at
+             FROM episodes
+             ORDER BY timestamp DESC
+             LIMIT ?1 OFFSET ?2",
+        )?;
+
+        let episodes = stmt.query_map(params![limit, offset], Episode::from_row)?;
+
+        episodes.collect()
     }
 
     pub fn delete_episodes_older_than(&self, cutoff_date: &str) -> Result<usize> {
@@ -206,6 +191,58 @@ mod tests {
 
         let count = db.count_episodes_by_app_and_title("Chrome", "Slack").unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_count_episodes() {
+        let db = setup();
+        assert_eq!(db.count_episodes().unwrap(), 0);
+
+        db.create_episode(&sample_episode()).unwrap();
+        assert_eq!(db.count_episodes().unwrap(), 1);
+
+        db.create_episode(&NewEpisode {
+            timestamp: "2026-04-02T10:00:00".to_string(),
+            context_app: "VS Code".to_string(),
+            context_title: "main.rs".to_string(),
+            context_duration_minutes: Some(30.0),
+            question: "何を開発中？".to_string(),
+            answer: "新機能の実装".to_string(),
+            tags: vec!["dev".to_string()],
+        }).unwrap();
+        assert_eq!(db.count_episodes().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_get_episodes_paginated() {
+        let db = setup();
+
+        // Create 3 episodes
+        for i in 0..3 {
+            db.create_episode(&NewEpisode {
+                timestamp: format!("2026-04-0{}T10:00:00", i + 1),
+                context_app: format!("App{}", i),
+                context_title: "title".to_string(),
+                context_duration_minutes: Some(10.0),
+                question: format!("Q{}", i),
+                answer: format!("A{}", i),
+                tags: vec![],
+            }).unwrap();
+        }
+
+        // Page 1 with limit 2 (newest first)
+        let page1 = db.get_episodes_paginated(2, 0).unwrap();
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].context_app, "App2"); // newest first
+
+        // Page 2 with limit 2
+        let page2 = db.get_episodes_paginated(2, 2).unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].context_app, "App0"); // oldest
+
+        // Beyond range
+        let page3 = db.get_episodes_paginated(2, 4).unwrap();
+        assert!(page3.is_empty());
     }
 
     #[test]

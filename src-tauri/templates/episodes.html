@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block nav_episodes %}class="active"{% endblock %}
+
+{% block content %}
+<p class="count">Episodes ({{ total_count }}件)</p>
+
+{% if episodes.is_empty() %}
+<div class="empty-state">
+  まだエピソードが記録されていません
+</div>
+{% else %}
+  {% for e in episodes %}
+  <div class="card">
+    <div class="card-header">
+      <h3>
+        <span class="badge badge-app">{{ e.context_app }}</span>
+        {{ e.context_title }}
+      </h3>
+      <span class="meta">{{ e.timestamp }}</span>
+    </div>
+    {% if let Some(dur) = e.context_duration_minutes %}
+    <div class="meta">{{ dur|fmt("{:.0}") }}分間</div>
+    {% endif %}
+    <dl class="qa">
+      <dt>Q</dt>
+      <dd>{{ e.question }}</dd>
+      <dt>A</dt>
+      <dd>{{ e.answer }}</dd>
+    </dl>
+    {% if !e.tags.is_empty() %}
+    <div style="margin-top: 8px;">
+      {% for tag in e.tags %}
+      <span class="badge badge-tag">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if total_pages > 1 %}
+  <div class="pagination">
+    {% if page > 1 %}
+      <a href="/episodes?page={{ page - 1 }}">&laquo; 前へ</a>
+    {% else %}
+      <span class="disabled">&laquo; 前へ</span>
+    {% endif %}
+    <span class="current">{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+      <a href="/episodes?page={{ page + 1 }}">次へ &raquo;</a>
+    {% else %}
+      <span class="disabled">次へ &raquo;</span>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

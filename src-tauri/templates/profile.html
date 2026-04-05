@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block nav_profile %}class="active"{% endblock %}
+
+{% block content %}
+{% if let Some(p) = profile %}
+<div class="card">
+  <table class="profile-table">
+    <tr>
+      <th>職業</th>
+      <td>{{ p.occupation.as_deref().unwrap_or("-") }}</td>
+    </tr>
+    <tr>
+      <th>スキル</th>
+      <td>
+        {% if p.skills.is_empty() %}
+          -
+        {% else %}
+          {% for s in p.skills %}
+          <span class="badge badge-tag">{{ s }}</span>
+          {% endfor %}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>興味・関心</th>
+      <td>
+        {% if p.interests.is_empty() %}
+          -
+        {% else %}
+          {% for i in p.interests %}
+          <span class="badge badge-tag">{{ i }}</span>
+          {% endfor %}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>メモ</th>
+      <td>{% if p.notes.is_empty() %}-{% else %}{{ p.notes }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>最終更新</th>
+      <td>{{ p.updated_at }}</td>
+    </tr>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  プロフィールはまだ設定されていません
+</div>
+{% endif %}
+{% endblock %}
