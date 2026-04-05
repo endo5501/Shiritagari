@@ -10,6 +10,7 @@ pub struct CleanupResult {
     pub speculations_promoted: usize,
 }
 
+const SPECULATION_PROMOTION_MIN_COUNT: i64 = 6;
 const SPECULATION_PROMOTION_CONFIDENCE: f64 = 0.75;
 
 impl Database {
@@ -19,25 +20,18 @@ impl Database {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
         let candidates = self.get_speculation_promotion_candidates(required_count)?;
 
-        let mut promoted = 0;
+        let count_before = self.count_active_patterns()?;
         for (app, title, inference) in &candidates {
-            // Skip if an active pattern already exists for this trigger
-            if let Ok(Some(_)) = self.find_matching_pattern(app, title) {
-                continue;
-            }
-
-            let result = self.try_promote_to_pattern(
+            self.try_promote_to_pattern(
                 app,
                 title,
                 inference,
                 SPECULATION_PROMOTION_CONFIDENCE,
                 &now,
-                0, // skip episode count check — speculation count already verified
+                0,
             )?;
-            if result.is_some() {
-                promoted += 1;
-            }
         }
+        let promoted = (self.count_active_patterns()? - count_before) as usize;
 
         Ok(promoted)
     }
@@ -45,6 +39,9 @@ impl Database {
     pub fn run_cleanup(&self) -> Result<CleanupResult> {
         let now = Utc::now();
         let now_str = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        // Promote speculations before deleting expired ones
+        let speculations_promoted = self.promote_speculations_to_patterns(SPECULATION_PROMOTION_MIN_COUNT)?;
 
         // Episodes older than 1 month
         let one_month_ago = (now - Duration::days(30))
@@ -60,9 +57,6 @@ impl Database {
             .format("%Y-%m-%dT%H:%M:%S")
             .to_string();
         let patterns_purged = self.purge_expired_soft_deleted_patterns(&thirty_days_ago)?;
-
-        // Promote speculations to patterns if threshold is met
-        let speculations_promoted = self.promote_speculations_to_patterns(6)?;
 
         Ok(CleanupResult {
             episodes_deleted,
