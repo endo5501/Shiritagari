@@ -7,9 +7,41 @@ pub struct CleanupResult {
     pub episodes_deleted: usize,
     pub speculations_deleted: usize,
     pub patterns_purged: usize,
+    pub speculations_promoted: usize,
 }
 
+const SPECULATION_PROMOTION_CONFIDENCE: f64 = 0.75;
+
 impl Database {
+    /// Check for speculation groups that meet the promotion threshold
+    /// and promote them to patterns. Returns the number of new patterns created or restored.
+    pub fn promote_speculations_to_patterns(&self, required_count: i64) -> Result<usize> {
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+        let candidates = self.get_speculation_promotion_candidates(required_count)?;
+
+        let mut promoted = 0;
+        for (app, title, inference) in &candidates {
+            // Skip if an active pattern already exists for this trigger
+            if let Ok(Some(_)) = self.find_matching_pattern(app, title) {
+                continue;
+            }
+
+            let result = self.try_promote_to_pattern(
+                app,
+                title,
+                inference,
+                SPECULATION_PROMOTION_CONFIDENCE,
+                &now,
+                0, // skip episode count check — speculation count already verified
+            )?;
+            if result.is_some() {
+                promoted += 1;
+            }
+        }
+
+        Ok(promoted)
+    }
+
     pub fn run_cleanup(&self) -> Result<CleanupResult> {
         let now = Utc::now();
         let now_str = now.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -29,10 +61,14 @@ impl Database {
             .to_string();
         let patterns_purged = self.purge_expired_soft_deleted_patterns(&thirty_days_ago)?;
 
+        // Promote speculations to patterns if threshold is met
+        let speculations_promoted = self.promote_speculations_to_patterns(6)?;
+
         Ok(CleanupResult {
             episodes_deleted,
             speculations_deleted,
             patterns_purged,
+            speculations_promoted,
         })
     }
 }
@@ -99,6 +135,98 @@ mod tests {
         assert_eq!(result.episodes_deleted, 1);
         assert_eq!(result.speculations_deleted, 1);
         assert_eq!(result.patterns_purged, 1);
+    }
+
+    #[test]
+    fn test_promote_speculations_basic() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Create 6 speculations with same app+title
+        for i in 0..6 {
+            db.create_speculation(&NewSpeculation {
+                timestamp: format!("2026-04-01T10:{:02}:00", i),
+                observed_app: "VS Code".to_string(),
+                observed_title: "main.rs".to_string(),
+                inference: format!("Rust development {}", i),
+                confidence: 0.7,
+                asked_user: false,
+                matched_pattern_id: None,
+                expires_at: "2026-04-10T10:00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let promoted = db.promote_speculations_to_patterns(6).unwrap();
+        assert_eq!(promoted, 1);
+
+        let patterns = db.get_all_active_patterns().unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].trigger_app, "VS Code");
+        assert_eq!(patterns[0].trigger_title_contains, "main.rs");
+        assert!(patterns[0].meaning.contains("Rust development 5")); // latest
+    }
+
+    #[test]
+    fn test_promote_speculations_below_threshold() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Only 5 speculations — not enough
+        for i in 0..5 {
+            db.create_speculation(&NewSpeculation {
+                timestamp: format!("2026-04-01T10:{:02}:00", i),
+                observed_app: "Chrome".to_string(),
+                observed_title: "docs".to_string(),
+                inference: format!("reading docs {}", i),
+                confidence: 0.7,
+                asked_user: false,
+                matched_pattern_id: None,
+                expires_at: "2026-04-10T10:00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let promoted = db.promote_speculations_to_patterns(6).unwrap();
+        assert_eq!(promoted, 0);
+        assert!(db.get_all_active_patterns().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_promote_speculations_no_duplicate() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Create an existing pattern
+        db.create_pattern(&NewPattern {
+            trigger_app: "VS Code".to_string(),
+            trigger_title_contains: "main.rs".to_string(),
+            trigger_time_range: None,
+            trigger_day_of_week: None,
+            meaning: "existing pattern".to_string(),
+            confidence: 0.9,
+            last_confirmed: "2026-04-01T10:00:00".to_string(),
+        })
+        .unwrap();
+
+        // Create 6 speculations with same trigger
+        for i in 0..6 {
+            db.create_speculation(&NewSpeculation {
+                timestamp: format!("2026-04-01T10:{:02}:00", i),
+                observed_app: "VS Code".to_string(),
+                observed_title: "main.rs".to_string(),
+                inference: format!("coding {}", i),
+                confidence: 0.7,
+                asked_user: false,
+                matched_pattern_id: None,
+                expires_at: "2026-04-10T10:00:00".to_string(),
+            })
+            .unwrap();
+        }
+
+        let promoted = db.promote_speculations_to_patterns(6).unwrap();
+        assert_eq!(promoted, 0); // no new pattern created, existing one returned
+
+        let patterns = db.get_all_active_patterns().unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].meaning, "existing pattern"); // unchanged
     }
 
     #[test]
