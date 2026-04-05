@@ -147,6 +147,30 @@ describe("Mascot UI", () => {
     expect(normalInput).toBeInTheDocument();
   });
 
+  test("shows error in thought bubble when send_message fails", async () => {
+    mockInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_mascot_config") {
+        return Promise.resolve({ character_image: null });
+      }
+      if (cmd === "send_message") {
+        return Promise.reject("不明なコマンドです: /unknown。/help で利用可能なコマンドを確認してください");
+      }
+      return Promise.resolve("mock response");
+    });
+    await renderApp();
+    const textarea = screen.getByPlaceholderText("メッセージを入力...");
+    fireEvent.change(textarea, { target: { value: "/unknown" } });
+
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: "Enter", isComposing: false });
+    });
+
+    const bubble = screen.getByTestId("bubble");
+    expect(bubble).toBeInTheDocument();
+    expect(bubble).toHaveTextContent("不明なコマンドです");
+    expect(bubble).toHaveClass("thought");
+  });
+
   test("IME: Enter during composition should NOT send", async () => {
     await renderApp();
     const textarea = screen.getByPlaceholderText("メッセージを入力...");

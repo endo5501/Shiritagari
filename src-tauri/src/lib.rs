@@ -1,9 +1,12 @@
+pub mod commands;
 pub mod config;
 pub mod inference;
 pub mod memory;
 pub mod polling;
 pub mod providers;
 
+use commands::router::CommandRouter;
+use commands::types::CommandContext;
 use config::AppConfig;
 use inference::InferenceEngine;
 use log::{debug, info, warn};
@@ -23,6 +26,7 @@ use tauri::{
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub config: AppConfig,
+    pub command_router: Arc<CommandRouter>,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
@@ -39,7 +43,22 @@ fn get_mascot_config(state: State<'_, AppState>) -> config::MascotConfig {
 }
 
 #[tauri::command]
-async fn send_message(message: String, state: State<'_, AppState>) -> Result<String, String> {
+async fn send_message(
+    message: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    // Check for slash command
+    if message.trim_start().starts_with('/') {
+        let ctx = CommandContext {
+            app_handle,
+            db: state.db.clone(),
+            plugin_list: state.command_router.plugin_list(),
+        };
+        let result = state.command_router.dispatch(&message, &ctx).await?;
+        return Ok(result.response);
+    }
+
     // Collect context from DB in a non-async block to avoid Send issues
     let context = {
         let db = state.db.lock().unwrap();
@@ -149,9 +168,15 @@ pub fn run() {
     let db = Database::open(&db_path).expect("Failed to open database");
     let db = Arc::new(Mutex::new(db));
 
+    let mut command_router = CommandRouter::new();
+    command_router.register(Box::new(commands::help::HelpPlugin));
+    command_router.register(Box::new(commands::timer::TimerPlugin));
+    let command_router = Arc::new(command_router);
+
     let app_state = AppState {
         db: db.clone(),
         config: config.clone(),
+        command_router,
     };
 
     tauri::Builder::default()
