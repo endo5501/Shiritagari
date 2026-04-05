@@ -12,6 +12,8 @@ pub struct AppConfig {
     pub privacy: PrivacyConfig,
     #[serde(default)]
     pub confidence: ConfidenceConfig,
+    #[serde(default)]
+    pub mascot: MascotConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -98,6 +100,20 @@ impl Default for PrivacyConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct MascotConfig {
+    #[serde(default)]
+    pub character_image: Option<String>,
+}
+
+impl Default for MascotConfig {
+    fn default() -> Self {
+        Self {
+            character_image: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct ConfidenceConfig {
     #[serde(default = "default_decay_rate")]
     pub decay_rate: f64,
@@ -152,6 +168,7 @@ impl Default for AppConfig {
             llm: LlmConfig::default(),
             privacy: PrivacyConfig::default(),
             confidence: ConfidenceConfig::default(),
+            mascot: MascotConfig::default(),
         }
     }
 }
@@ -208,5 +225,28 @@ decay_rate = 0.98
         let config = AppConfig::load(&path).unwrap();
         assert_eq!(config.polling.interval_minutes, 10);
         assert_eq!(config.llm.provider, "ollama");
+    }
+
+    #[test]
+    fn test_default_mascot_config() {
+        let config = AppConfig::default();
+        assert!(config.mascot.character_image.is_none());
+    }
+
+    #[test]
+    fn test_load_mascot_config_from_toml() {
+        let toml_content = r#"
+[mascot]
+character_image = "/path/to/character.png"
+"#;
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(toml_content.as_bytes()).unwrap();
+        let path = tmpfile.path().to_path_buf();
+
+        let config = AppConfig::load(&path).unwrap();
+        assert_eq!(
+            config.mascot.character_image,
+            Some("/path/to/character.png".to_string())
+        );
     }
 }
