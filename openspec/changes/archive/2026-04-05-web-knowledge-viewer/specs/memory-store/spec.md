@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: パターン記憶の管理
 システムはパターン記憶（長期）をSQLiteに保存し、trigger条件、meaning、confidence、最終確認日を管理しなければならない（SHALL）。ページング対応のため、件数取得と limit/offset 付きクエリを提供しなければならない（SHALL）。
@@ -45,21 +45,3 @@
 #### Scenario: エピソードのページング取得
 - **WHEN** limit と offset を指定してエピソードを取得する時
 - **THEN** エピソードを新しい順で指定範囲で返し、総件数も取得できる
-
-### Requirement: 推測ログの管理
-システムは推測ログ（短期）をSQLiteに保存し、推測内容、confidence、確認済みフラグ、有効期限を管理しなければならない（SHALL）。
-
-#### Scenario: 推測ログの保存
-- **WHEN** LLM推論が完了した時
-- **THEN** 推測内容、confidence、タイムスタンプ、有効期限（3日後）を含む推測ログを保存する
-
-#### Scenario: 推測ログの自動削除
-- **WHEN** 推測ログの有効期限を過ぎた時
-- **THEN** その推測ログを自動削除する
-
-### Requirement: ユーザプロファイルの管理
-システムはユーザプロファイル（職業、スキル、関心事等）をSQLiteに保存し、LLM推論のコンテキストとして利用しなければならない（SHALL）。
-
-#### Scenario: プロファイル更新
-- **WHEN** チャット対話やエピソード記憶からユーザの属性情報が得られた時
-- **THEN** ユーザプロファイルを更新する

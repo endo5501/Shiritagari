@@ -5,6 +5,7 @@ pub mod inference;
 pub mod memory;
 pub mod polling;
 pub mod providers;
+pub mod web;
 
 use commands::router::CommandRouter;
 use commands::types::CommandContext;
@@ -17,7 +18,7 @@ use providers::factory::{create_chat_provider, create_inference_provider};
 use providers::types::{ChatMessage, MessageRole};
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::{
     tray::TrayIconBuilder, Manager, State,
@@ -28,6 +29,7 @@ pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub config: AppConfig,
     pub command_router: Arc<CommandRouter>,
+    pub web_port: OnceLock<Option<u16>>,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
@@ -174,6 +176,7 @@ pub fn run() {
         db: db.clone(),
         config: config.clone(),
         command_router,
+        web_port: OnceLock::new(),
     };
 
     tauri::Builder::default()
@@ -189,10 +192,20 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // Start web server
+            let db_for_web = db.clone();
+            let app_handle_for_web = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let port = web::start_server(db_for_web).await;
+                let state = app_handle_for_web.state::<AppState>();
+                let _ = state.web_port.set(port);
+            });
+
             // System tray
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let knowledge = MenuItemBuilder::with_id("knowledge", "Knowledge Base").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+            let menu = MenuBuilder::new(app).items(&[&show, &knowledge, &quit]).build()?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -204,6 +217,25 @@ pub fn run() {
                         if let Some(window) = app.get_webview_window("main") {
                             window.show().ok();
                             window.set_focus().ok();
+                        }
+                    }
+                    "knowledge" => {
+                        let state = app.state::<AppState>();
+                        match state.web_port.get() {
+                            Some(Some(port)) => {
+                                let url = format!("http://127.0.0.1:{}", port);
+                                if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+                                    warn!("Failed to open browser: {}", e);
+                                }
+                            }
+                            Some(None) => {
+                                events::emit_thought(app, "Knowledge Baseサーバの起動に失敗しました。ポートが使用できません。", 0.0);
+                                bring_window_to_front(app);
+                            }
+                            None => {
+                                events::emit_thought(app, "Knowledge Baseサーバを起動中です。しばらくお待ちください。", 0.0);
+                                bring_window_to_front(app);
+                            }
                         }
                     }
                     "quit" => {
