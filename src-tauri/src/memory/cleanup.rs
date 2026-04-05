@@ -2,6 +2,7 @@ use chrono::{Duration, Utc};
 use rusqlite::Result;
 
 use super::db::Database;
+use super::patterns::NewPattern;
 
 pub struct CleanupResult {
     pub episodes_deleted: usize,
@@ -15,23 +16,38 @@ const SPECULATION_PROMOTION_CONFIDENCE: f64 = 0.75;
 
 impl Database {
     /// Check for speculation groups that meet the promotion threshold
-    /// and promote them to patterns. Returns the number of new patterns created or restored.
+    /// and promote them to patterns using exact trigger matching.
+    /// Returns the number of new patterns created or restored.
     pub fn promote_speculations_to_patterns(&self, required_count: i64) -> Result<usize> {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let candidates = self.get_speculation_promotion_candidates(required_count)?;
+        let candidates = self.get_speculation_promotion_candidates(required_count, &now)?;
 
-        let count_before = self.count_active_patterns()?;
+        let mut promoted = 0;
         for (app, title, inference) in &candidates {
-            self.try_promote_to_pattern(
-                app,
-                title,
-                inference,
-                SPECULATION_PROMOTION_CONFIDENCE,
-                &now,
-                0,
-            )?;
+            // Use exact matching to avoid broader patterns blocking specific promotions
+            if self.find_exact_active_pattern(app, title)?.is_some() {
+                continue;
+            }
+
+            // Restore soft-deleted pattern if one exists with the same exact trigger
+            if let Some(deleted) = self.find_soft_deleted_pattern_by_trigger(app, title)? {
+                self.restore_pattern(deleted.id, SPECULATION_PROMOTION_CONFIDENCE, &now)?;
+                promoted += 1;
+                continue;
+            }
+
+            // Create new pattern
+            self.create_pattern(&NewPattern {
+                trigger_app: app.to_string(),
+                trigger_title_contains: title.to_string(),
+                trigger_time_range: None,
+                trigger_day_of_week: None,
+                meaning: inference.to_string(),
+                confidence: SPECULATION_PROMOTION_CONFIDENCE,
+                last_confirmed: now.to_string(),
+            })?;
+            promoted += 1;
         }
-        let promoted = (self.count_active_patterns()? - count_before) as usize;
 
         Ok(promoted)
     }
