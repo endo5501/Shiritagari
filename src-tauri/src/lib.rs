@@ -29,7 +29,7 @@ pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     pub config: AppConfig,
     pub command_router: Arc<CommandRouter>,
-    pub web_port: OnceLock<u16>,
+    pub web_port: OnceLock<Option<u16>>,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
@@ -196,10 +196,9 @@ pub fn run() {
             let db_for_web = db.clone();
             let app_handle_for_web = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Some(port) = web::start_server(db_for_web).await {
-                    let state = app_handle_for_web.state::<AppState>();
-                    let _ = state.web_port.set(port);
-                }
+                let port = web::start_server(db_for_web).await;
+                let state = app_handle_for_web.state::<AppState>();
+                let _ = state.web_port.set(port);
             });
 
             // System tray
@@ -222,10 +221,20 @@ pub fn run() {
                     }
                     "knowledge" => {
                         let state = app.state::<AppState>();
-                        if let Some(&port) = state.web_port.get() {
-                            let url = format!("http://127.0.0.1:{}", port);
-                            if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
-                                warn!("Failed to open browser: {}", e);
+                        match state.web_port.get() {
+                            Some(Some(port)) => {
+                                let url = format!("http://127.0.0.1:{}", port);
+                                if let Err(e) = tauri_plugin_opener::open_url(&url, None::<&str>) {
+                                    warn!("Failed to open browser: {}", e);
+                                }
+                            }
+                            Some(None) => {
+                                events::emit_thought(app, "Knowledge Baseサーバの起動に失敗しました。ポートが使用できません。", 0.0);
+                                bring_window_to_front(app);
+                            }
+                            None => {
+                                events::emit_thought(app, "Knowledge Baseサーバを起動中です。しばらくお待ちください。", 0.0);
+                                bring_window_to_front(app);
                             }
                         }
                     }
