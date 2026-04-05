@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod events;
 pub mod inference;
 pub mod memory;
 pub mod polling;
@@ -19,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{
-    tray::TrayIconBuilder, Emitter, Manager, State,
+    tray::TrayIconBuilder, Manager, State,
     menu::{MenuBuilder, MenuItemBuilder},
 };
 
@@ -237,13 +238,13 @@ pub fn run() {
                         !db.is_confirmed(&confirmation_key).unwrap_or(true)
                     };
                     if needs_confirmation {
-                        app_handle.emit(
-                            "shiritagari-question",
+                        events::emit_question(
+                            &app_handle,
                             &format!(
                                 "外部LLM API ({}) を推論に使用します。ウィンドウタイトル等の操作データが外部サーバーに送信されます。よろしいですか？（このメッセージは初回のみ表示されます）",
                                 inference_provider_name
                             ),
-                        ).ok();
+                        );
                         let db = db_clone.lock().unwrap();
                         db.set_confirmed(&confirmation_key).ok();
                     }
@@ -258,7 +259,7 @@ pub fn run() {
                         // Check if user returned from AFK and emit any pending question
                         if let Some(pending) = question_queue.check_afk_return(result.is_afk) {
                             info!("User returned from AFK, emitting pending question");
-                            app_handle.emit("shiritagari-question", &pending).ok();
+                            events::emit_question(&app_handle, &pending);
                             bring_window_to_front(&app_handle);
                         }
 
@@ -295,12 +296,8 @@ pub fn run() {
                                     match question_queue.process_question(question.clone(), result.is_afk) {
                                         Some(q) => {
                                             info!("Emitting re-ask question to frontend");
-                                            app_handle.emit("shiritagari-question", &q).ok();
-                                            if let Some(window) = app_handle.get_webview_window("main") {
-                                                window.show().ok();
-                                                window.set_always_on_top(true).ok();
-                                                window.set_focus().ok();
-                                            }
+                                            events::emit_question(&app_handle, &q);
+                                            bring_window_to_front(&app_handle);
                                         }
                                         None => {
                                             debug!("Re-ask question queued (user is AFK)");
@@ -318,11 +315,7 @@ pub fn run() {
                                         let elapsed = llm_start.elapsed();
                                         info!("LLM inference completed in {:.1}s", elapsed.as_secs_f64());
 
-                                        // Emit thought to frontend for mascot bubble display
-                                        app_handle.emit("shiritagari-thought", &serde_json::json!({
-                                            "inference": output.inference,
-                                            "confidence": output.confidence,
-                                        })).ok();
+                                        events::emit_thought(&app_handle, &output.inference, output.confidence);
 
                                         // Step 3: Sync - save results (holds lock briefly)
                                         let ir = {
@@ -333,12 +326,8 @@ pub fn run() {
                                             match question_queue.process_question(question.clone(), result.is_afk) {
                                                 Some(q) => {
                                                     info!("Emitting question to frontend");
-                                                    app_handle.emit("shiritagari-question", &q).ok();
-                                                    if let Some(window) = app_handle.get_webview_window("main") {
-                                                        window.show().ok();
-                                                        window.set_always_on_top(true).ok();
-                                                        window.set_focus().ok();
-                                                    }
+                                                    events::emit_question(&app_handle, &q);
+                                                    bring_window_to_front(&app_handle);
                                                 }
                                                 None => {
                                                     debug!("Question queued (user is AFK)");

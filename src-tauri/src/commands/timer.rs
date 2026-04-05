@@ -1,10 +1,15 @@
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use regex::Regex;
-use tauri::Emitter;
 
 use super::types::{CommandContext, CommandPlugin, CommandResult};
+use crate::events;
+
+static RE_HOURS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)時間").unwrap());
+static RE_MINUTES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)分").unwrap());
+static RE_SECONDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)秒").unwrap());
 
 pub fn parse_duration(input: &str) -> Result<Duration, String> {
     let input = input.replace(char::is_whitespace, "");
@@ -12,32 +17,31 @@ pub fn parse_duration(input: &str) -> Result<Duration, String> {
         return Err("時間を指定してください".to_string());
     }
 
-    let re_hours = Regex::new(r"(\d+)時間").unwrap();
-    let re_minutes = Regex::new(r"(\d+)分").unwrap();
-    let re_seconds = Regex::new(r"(\d+)秒").unwrap();
+    let cap_hours = RE_HOURS.captures(&input);
+    let cap_minutes = RE_MINUTES.captures(&input);
+    let cap_seconds = RE_SECONDS.captures(&input);
 
-    let hours: u64 = re_hours
-        .captures(&input)
+    let hours: u64 = cap_hours
+        .as_ref()
         .and_then(|c| c[1].parse().ok())
         .unwrap_or(0);
-    let minutes: u64 = re_minutes
-        .captures(&input)
+    let minutes: u64 = cap_minutes
+        .as_ref()
         .and_then(|c| c[1].parse().ok())
         .unwrap_or(0);
-    let seconds: u64 = re_seconds
-        .captures(&input)
+    let seconds: u64 = cap_seconds
+        .as_ref()
         .and_then(|c| c[1].parse().ok())
         .unwrap_or(0);
 
-    let has_unit = re_hours.is_match(&input) || re_minutes.is_match(&input) || re_seconds.is_match(&input);
+    let has_unit = cap_hours.is_some() || cap_minutes.is_some() || cap_seconds.is_some();
 
     let total_seconds = if has_unit {
         hours * 3600 + minutes * 60 + seconds
     } else {
-        // Try to parse as a bare number (interpreted as minutes)
         let bare: u64 = input
             .parse()
-            .map_err(|_| format!("時間を解析できませんでした。\n使い方: /timer <時間>\n例: /timer 30分, /timer 1時間30分, /timer 90秒"))?;
+            .map_err(|_| "時間を解析できませんでした".to_string())?;
         bare * 60
     };
 
@@ -89,21 +93,14 @@ impl CommandPlugin for TimerPlugin {
             return Err(format!("使い方: {}", self.usage()));
         }
 
-        let duration = parse_duration(args)?;
+        let duration = parse_duration(args)
+            .map_err(|e| format!("{}\n使い方: {}", e, self.usage()))?;
         let label = format_duration(&duration);
         let app_handle = ctx.app_handle.clone();
 
         tokio::spawn(async move {
             tokio::time::sleep(duration).await;
-            app_handle
-                .emit(
-                    "shiritagari-thought",
-                    &serde_json::json!({
-                        "inference": "⏰ タイマーが完了したよ！",
-                        "confidence": 1.0,
-                    }),
-                )
-                .ok();
+            events::emit_thought(&app_handle, "⏰ タイマーが完了したよ！", 1.0);
         });
 
         Ok(CommandResult {
