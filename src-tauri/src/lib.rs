@@ -31,11 +31,7 @@ pub struct AppState {
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        window.show().ok();
-        window.set_always_on_top(true).ok();
-        window.set_focus().ok();
-    }
+    events::bring_window_to_front(app_handle);
 }
 
 #[tauri::command]

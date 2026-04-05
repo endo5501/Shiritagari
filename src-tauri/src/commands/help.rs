@@ -11,7 +11,7 @@ impl CommandPlugin for HelpPlugin {
     }
 
     fn description(&self) -> &str {
-        "���用可能なコマンド一覧を表示"
+        "利用可能なコマンド一覧を表示"
     }
 
     fn usage(&self) -> &str {

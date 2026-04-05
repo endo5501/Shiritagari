@@ -101,6 +101,7 @@ impl CommandPlugin for TimerPlugin {
         tokio::spawn(async move {
             tokio::time::sleep(duration).await;
             events::emit_thought(&app_handle, "⏰ タイマーが完了したよ！", 1.0);
+            events::bring_window_to_front(&app_handle);
         });
 
         Ok(CommandResult {
