@@ -56,6 +56,8 @@ pub struct LlmConfig {
     pub chat_api_key_env: Option<String>,
     #[serde(default)]
     pub ollama_base_url: Option<String>,
+    #[serde(default)]
+    pub openai_base_url: Option<String>,
 }
 
 impl Default for LlmConfig {
@@ -71,6 +73,7 @@ impl Default for LlmConfig {
             chat_model: None,
             chat_api_key_env: None,
             ollama_base_url: None,
+            openai_base_url: None,
         }
     }
 }
@@ -244,6 +247,30 @@ decay_rate = 0.98
         let default_config = MascotConfig::default();
         let json = serde_json::to_value(&default_config).unwrap();
         assert!(json["character_image"].is_null());
+    }
+
+    #[test]
+    fn test_default_openai_base_url_is_none() {
+        let config = AppConfig::default();
+        assert!(config.llm.openai_base_url.is_none());
+    }
+
+    #[test]
+    fn test_load_openai_base_url_from_toml() {
+        let toml_content = r#"
+[llm]
+provider = "openai"
+openai_base_url = "http://localhost:1234"
+"#;
+        let mut tmpfile = NamedTempFile::new().unwrap();
+        tmpfile.write_all(toml_content.as_bytes()).unwrap();
+        let path = tmpfile.path().to_path_buf();
+
+        let config = AppConfig::load(&path).unwrap();
+        assert_eq!(
+            config.llm.openai_base_url,
+            Some("http://localhost:1234".to_string())
+        );
     }
 
     #[test]

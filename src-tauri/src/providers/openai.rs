@@ -10,14 +10,22 @@ pub struct OpenAiProvider {
     client: Client,
     api_key: String,
     model: String,
+    base_url: String,
 }
 
 impl OpenAiProvider {
-    pub fn new(api_key: String, model: Option<String>) -> Self {
+    pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
+        let base_url = base_url
+            .unwrap_or_else(|| "https://api.openai.com".to_string());
+        let base_url = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string();
         Self {
             client: Client::new(),
             api_key,
             model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+            base_url,
         }
     }
 
@@ -30,7 +38,7 @@ impl OpenAiProvider {
 
         let resp = self
             .client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(format!("{}/v1/chat/completions", self.base_url))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -113,5 +121,75 @@ impl LlmProvider for OpenAiProvider {
 
     fn name(&self) -> &str {
         "openai"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_base_url() {
+        let provider = OpenAiProvider::new("test-key".to_string(), None, None);
+        assert_eq!(provider.base_url, "https://api.openai.com");
+    }
+
+    #[test]
+    fn test_custom_base_url() {
+        let provider = OpenAiProvider::new(
+            "test-key".to_string(),
+            None,
+            Some("http://localhost:1234".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_empty_api_key_allowed() {
+        let provider = OpenAiProvider::new("".to_string(), None, Some("http://localhost:1234".to_string()));
+        assert_eq!(provider.api_key, "");
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_default_model() {
+        let provider = OpenAiProvider::new("key".to_string(), None, None);
+        assert_eq!(provider.model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_custom_model() {
+        let provider = OpenAiProvider::new("key".to_string(), Some("gpt-4o".to_string()), None);
+        assert_eq!(provider.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_base_url_trailing_slash_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_base_url_with_v1_suffix_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/v1".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_base_url_with_v1_slash_suffix_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/v1/".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
     }
 }
