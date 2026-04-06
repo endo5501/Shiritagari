@@ -1,11 +1,23 @@
 ## ADDED Requirements
 
 ### Requirement: ActivityWatch APIからイベントを定期取得する
-システムは設定された間隔（デフォルト10分）でActivityWatch REST API (localhost:5600) からウィンドウイベントとAFKイベントを取得しなければならない（SHALL）。AFK状態に関わらずイベント取得と推論を実行しなければならない（SHALL）。イベント取得は直近30分以内に制限しなければならない（SHALL）。
+システムは設定された間隔（デフォルト10分）でActivityWatch REST API (localhost:5600) からウィンドウイベントとAFKイベントを取得しなければならない（SHALL）。AFK状態に関わらずイベント取得と推論を実行しなければならない（SHALL）。イベント取得は直近30分以内に制限しなければならない（SHALL）。ポーリングループは、サイクルの結果（新規イベントの有無、処理成功/失敗）に関わらず、毎サイクル設定間隔のスリープを実行しなければならない（SHALL）。起動直後の初回サイクルのみスリープをスキップして即時実行しなければならない（SHALL）。
 
 #### Scenario: 正常なポーリング
 - **WHEN** ポーリング間隔が経過した時
 - **THEN** SQLiteに保存された最終処理カーソル（タイムスタンプ）以降のイベントのみを `GET /api/0/buckets/aw-watcher-window_{hostname}/events?start={cursor}` と `GET /api/0/buckets/aw-watcher-afk_{hostname}/events?start={cursor}` で取得する
+
+#### Scenario: 新規イベントがない場合のスリープ保証
+- **WHEN** 取得したイベントがすべて処理済みで新規イベントがない時
+- **THEN** 推論処理をスキップし、次のサイクルまで設定間隔のスリープを実行する（スリープをスキップしてはならない）
+
+#### Scenario: 処理失敗時のスリープ保証
+- **WHEN** inference provider の作成に失敗した時
+- **THEN** そのサイクルの処理を中断し、次のサイクルまで設定間隔のスリープを実行する（スリープをスキップしてはならない）
+
+#### Scenario: 起動直後の初回ポーリング
+- **WHEN** アプリケーションが起動した直後
+- **THEN** スリープをスキップして即座に最初のポーリングサイクルを実行する
 
 #### Scenario: ユーザがAFK状態の場合
 - **WHEN** aw-watcher-afkのステータスが "afk" である時
