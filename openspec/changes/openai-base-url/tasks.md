@@ -12,7 +12,7 @@
 
 ## 3. Factory
 
-- [x] 3.1 `create_provider()` に `openai_base_url: Option<&str>` パラメータを追加する
+- [x] 3.1 `create_provider()` のシグネチャをリファクタリングし、`&LlmConfig` を受け取る形に変更する
 - [x] 3.2 `openai` プロバイダ生成時に `base_url` を `OpenAiProvider::new()` に渡す
 - [x] 3.3 `openai_base_url` が設定されている場合、APIキー環境変数が未設定でも空文字列でフォールバックする
 - [x] 3.4 `create_inference_provider()` と `create_chat_provider()` から `openai_base_url` を渡す
