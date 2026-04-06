@@ -279,8 +279,11 @@ pub fn run() {
                 }
 
                 let mut question_queue = QuestionQueue::new();
+                let mut ticker = tokio::time::interval(poller.interval_duration());
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
+                    ticker.tick().await;
                     debug!("Polling cycle started");
 
                     if let Some(result) = poller.poll_once().await {
@@ -393,8 +396,6 @@ pub fn run() {
                     } else {
                         debug!("Cycle skipped: poll_once returned None");
                     }
-
-                    tokio::time::sleep(poller.interval_duration()).await;
                 }
             });
 
