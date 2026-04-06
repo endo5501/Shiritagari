@@ -280,6 +280,7 @@ pub fn run() {
 
                 let mut question_queue = QuestionQueue::new();
                 let mut ticker = tokio::time::interval(poller.interval_duration());
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
                     ticker.tick().await;
