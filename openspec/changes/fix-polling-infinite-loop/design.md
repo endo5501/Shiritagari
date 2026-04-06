@@ -15,28 +15,27 @@
 
 ## Decisions
 
-### スリープをループ先頭に移動 + first_run フラグ（方針 B-1）
+### `tokio::time::interval` + `MissedTickBehavior::Delay` でループ先頭にスリープを配置
 
-スリープをループ末尾から先頭に移動する。`first_run` フラグで初回のみスリープをスキップし、即時実行を維持する。
+`tokio::time::interval` はループ先頭に `tick().await` を置くパターンで、初回は即時返却、以降はインターバル分待つ。`MissedTickBehavior::Delay` を設定し、サイクルがインターバルを超過した場合もバーストせず、完了後に必ずフルインターバル待つようにする。
 
 ```rust
-let mut first_run = true;
+let mut ticker = tokio::time::interval(poller.interval_duration());
+ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
 loop {
-    if first_run {
-        first_run = false;
-    } else {
-        tokio::time::sleep(poller.interval_duration()).await;
-    }
+    ticker.tick().await;
     debug!("Polling cycle started");
-    // ... (continue は自由に使える)
+    // ... (continue は自由に使える、必ず tick().await を通る)
 }
 ```
 
 **却下した代替案:**
 
 - **A. 各 `continue` 前にスリープ追加**: 変更は最小だが、今後 `continue` を追加する際に同じバグが再発するリスクがある
+- **B-1. `first_run` フラグ + `tokio::time::sleep`**: 構造的に安全だが、`tokio::time::interval` が同じ振る舞いを標準で提供しているため不要
 - **C. ループ本体を関数に抽出**: 構造的に安全だが、この修正に対してリファクタリング規模が大きすぎる
 
 ## Risks / Trade-offs
 
-- [初回スキップの安全性] `first_run` フラグが `continue` で先頭に戻った時もスリープを保証する → `first_run` は初回ループの最初で即 `false` に設定されるため、2回目以降は必ずスリープを通る。安全。
+- [MissedTickBehavior] デフォルトの `Burst` モードではサイクル超過時に即座に次の tick が発火するため、`Delay` を明示的に設定する必要がある。`Delay` により「前回 tick 完了からインターバル分待つ」動作が保証される。
