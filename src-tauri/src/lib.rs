@@ -279,12 +279,10 @@ pub fn run() {
                 }
 
                 let mut question_queue = QuestionQueue::new();
-                let mut polling_timer = polling::PollingTimer::new(poller.interval_duration());
+                let mut ticker = tokio::time::interval(poller.interval_duration());
 
                 loop {
-                    if let Some(delay) = polling_timer.next_delay() {
-                        tokio::time::sleep(delay).await;
-                    }
+                    ticker.tick().await;
                     debug!("Polling cycle started");
 
                     if let Some(result) = poller.poll_once().await {
