@@ -15,14 +15,17 @@ pub fn create_provider(provider_name: &str, model: Option<&str>, api_key_env: Op
             Ok(Box::new(ClaudeProvider::new(api_key, model.map(String::from))))
         }
         "openai" => {
+            let base_url = config.openai_base_url.as_deref()
+                .filter(|s| !s.is_empty())
+                .map(String::from);
             let env_var = api_key_env.unwrap_or("OPENAI_API_KEY");
-            let api_key = if config.openai_base_url.is_some() {
+            let api_key = if base_url.is_some() {
                 env::var(env_var).unwrap_or_default()
             } else {
                 env::var(env_var)
                     .map_err(|_| format!("Environment variable {} not set", env_var))?
             };
-            Ok(Box::new(OpenAiProvider::new(api_key, model.map(String::from), config.openai_base_url.clone())))
+            Ok(Box::new(OpenAiProvider::new(api_key, model.map(String::from), base_url)))
         }
         "ollama" => {
             Ok(Box::new(OllamaProvider::new(
@@ -95,5 +98,17 @@ mod tests {
 
         let provider = create_chat_provider(&config).unwrap();
         assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_create_openai_empty_base_url_requires_api_key() {
+        let config = LlmConfig {
+            provider: "openai".to_string(),
+            openai_base_url: Some("".to_string()),
+            ..LlmConfig::default()
+        };
+        // Empty base_url should be treated as None, so API key is required
+        let result = create_inference_provider(&config);
+        assert!(result.is_err());
     }
 }

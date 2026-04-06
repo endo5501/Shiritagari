@@ -15,11 +15,17 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(api_key: String, model: Option<String>, base_url: Option<String>) -> Self {
+        let base_url = base_url
+            .unwrap_or_else(|| "https://api.openai.com".to_string());
+        let base_url = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string();
         Self {
             client: Client::new(),
             api_key,
             model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
-            base_url: base_url.unwrap_or_else(|| "https://api.openai.com".to_string()),
+            base_url,
         }
     }
 
@@ -155,5 +161,35 @@ mod tests {
     fn test_custom_model() {
         let provider = OpenAiProvider::new("key".to_string(), Some("gpt-4o".to_string()), None);
         assert_eq!(provider.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_base_url_trailing_slash_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_base_url_with_v1_suffix_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/v1".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_base_url_with_v1_slash_suffix_stripped() {
+        let provider = OpenAiProvider::new(
+            "key".to_string(),
+            None,
+            Some("http://localhost:1234/v1/".to_string()),
+        );
+        assert_eq!(provider.base_url, "http://localhost:1234");
     }
 }
