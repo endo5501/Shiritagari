@@ -6,6 +6,8 @@ use serde_json::json;
 use super::json_extract::extract_json;
 use super::types::*;
 
+pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
+
 pub struct OllamaProvider {
     client: Client,
     base_url: String,
@@ -16,7 +18,7 @@ impl OllamaProvider {
     pub fn new(base_url: Option<String>, model: Option<String>) -> Self {
         Self {
             client: Client::new(),
-            base_url: base_url.unwrap_or_else(|| "http://localhost:11434".to_string()),
+            base_url: base_url.unwrap_or_else(|| DEFAULT_OLLAMA_BASE_URL.to_string()),
             model: model.unwrap_or_else(|| "llama3".to_string()),
         }
     }

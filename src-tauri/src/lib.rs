@@ -18,18 +18,21 @@ use providers::factory::{create_chat_provider, create_inference_provider};
 use providers::types::{ChatMessage, MessageRole};
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use tauri::{
-    tray::TrayIconBuilder, Manager, State,
+    tray::TrayIconBuilder, Manager, State, WebviewUrl,
     menu::{MenuBuilder, MenuItemBuilder},
+    webview::WebviewWindowBuilder,
 };
 
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
-    pub config: AppConfig,
+    pub config: Arc<RwLock<AppConfig>>,
+    pub config_path: PathBuf,
     pub command_router: Arc<CommandRouter>,
     pub web_port: OnceLock<Option<u16>>,
+    pub polling_interval_tx: tokio::sync::watch::Sender<u64>,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
@@ -38,7 +41,77 @@ fn bring_window_to_front(app_handle: &tauri::AppHandle) {
 
 #[tauri::command]
 fn get_mascot_config(state: State<'_, AppState>) -> config::MascotConfig {
-    state.config.mascot.clone()
+    state.config.read().unwrap().mascot.clone()
+}
+
+#[tauri::command]
+fn get_config(state: State<'_, AppState>) -> AppConfig {
+    state.config.read().unwrap().clone()
+}
+
+#[tauri::command]
+async fn save_config(
+    new_config: AppConfig,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    new_config
+        .save(&state.config_path)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    let new_interval = new_config.polling.interval_minutes;
+    let old_interval = {
+        let mut config = state.config.write().unwrap();
+        let old = config.polling.interval_minutes;
+        *config = new_config;
+        old
+    };
+
+    if new_interval != old_interval {
+        state
+            .polling_interval_tx
+            .send(new_interval)
+            .map_err(|e| format!("Failed to notify polling interval change: {}", e))?;
+    }
+
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct OllamaModel {
+    name: String,
+}
+
+#[tauri::command]
+async fn list_ollama_models(base_url: Option<String>) -> Result<Vec<OllamaModel>, String> {
+    let base = base_url.unwrap_or_else(|| providers::ollama::DEFAULT_OLLAMA_BASE_URL.to_string());
+    let url = format!("{}/api/tags", base.trim_end_matches('/'));
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Ollama at {}: {}", base, e))?;
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
+
+    let empty = vec![];
+    let models = body["models"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|m| {
+            m["name"]
+                .as_str()
+                .map(|name| OllamaModel { name: name.to_string() })
+        })
+        .collect();
+
+    Ok(models)
 }
 
 #[tauri::command]
@@ -94,7 +167,7 @@ async fn send_message(
         ctx
     };
 
-    let provider = create_chat_provider(&state.config.llm)?;
+    let provider = create_chat_provider(&state.config.read().unwrap().llm)?;
 
     let messages = vec![
         ChatMessage {
@@ -153,6 +226,9 @@ pub fn run() {
         .join("config.toml");
 
     let config = AppConfig::load(&config_path).unwrap_or_default();
+    let (polling_interval_tx, polling_interval_rx) =
+        tokio::sync::watch::channel(config.polling.interval_minutes);
+    let config = Arc::new(RwLock::new(config));
 
     let db_path = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -175,15 +251,17 @@ pub fn run() {
     let app_state = AppState {
         db: db.clone(),
         config: config.clone(),
+        config_path: config_path.clone(),
         command_router,
         web_port: OnceLock::new(),
+        polling_interval_tx,
     };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(app_state)
-        .invoke_handler(tauri::generate_handler![get_mascot_config, send_message, answer_question])
+        .invoke_handler(tauri::generate_handler![get_mascot_config, send_message, answer_question, get_config, save_config, list_ollama_models])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Hide instead of closing so the app stays in system tray
@@ -204,8 +282,9 @@ pub fn run() {
             // System tray
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let knowledge = MenuItemBuilder::with_id("knowledge", "Knowledge Base").build(app)?;
+            let settings = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &knowledge, &quit]).build()?;
+            let menu = MenuBuilder::new(app).items(&[&show, &knowledge, &settings, &quit]).build()?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().unwrap())
@@ -238,6 +317,23 @@ pub fn run() {
                             }
                         }
                     }
+                    "settings" => {
+                        if let Some(window) = app.get_webview_window("settings") {
+                            window.show().ok();
+                            window.set_focus().ok();
+                        } else {
+                            WebviewWindowBuilder::new(
+                                app,
+                                "settings",
+                                WebviewUrl::App("settings.html".into()),
+                            )
+                            .title("Shiritagari Settings")
+                            .inner_size(500.0, 600.0)
+                            .resizable(true)
+                            .build()
+                            .ok();
+                        }
+                    }
                     "quit" => {
                         app.exit(0);
                     }
@@ -247,34 +343,42 @@ pub fn run() {
 
             // Start polling in background
             let app_handle = app.handle().clone();
-            let config_clone = config.clone();
+            let config_for_poll = config.clone();
             let db_clone = db.clone();
+            let mut polling_interval_rx = polling_interval_rx;
 
             tauri::async_runtime::spawn(async move {
                 let aw_client = AwClient::default();
-                let poller = Poller::new(aw_client, db_clone.clone(), config_clone.polling.interval_minutes);
-                let engine = InferenceEngine::new(config_clone.clone());
+                let initial_interval = {
+                    let cfg = config_for_poll.read().unwrap();
+                    cfg.polling.interval_minutes
+                };
+                let poller = Poller::new(aw_client, db_clone.clone(), initial_interval);
+                let engine = InferenceEngine::new(config_for_poll.clone());
 
                 // Check if external API needs first-use confirmation
-                let inference_provider_name = config_clone.llm.inference_provider
-                    .as_deref()
-                    .unwrap_or(&config_clone.llm.provider);
-                if inference_provider_name == "claude" || inference_provider_name == "openai" {
-                    let confirmation_key = format!("external_api_{}", inference_provider_name);
-                    let needs_confirmation = {
-                        let db = db_clone.lock().unwrap();
-                        !db.is_confirmed(&confirmation_key).unwrap_or(true)
-                    };
-                    if needs_confirmation {
-                        events::emit_question(
-                            &app_handle,
-                            &format!(
-                                "外部LLM API ({}) を推論に使用します。ウィンドウタイトル等の操作データが外部サーバーに送信されます。よろしいですか？（このメッセージは初回のみ表示されます）",
-                                inference_provider_name
-                            ),
-                        );
-                        let db = db_clone.lock().unwrap();
-                        db.set_confirmed(&confirmation_key).ok();
+                {
+                    let cfg = config_for_poll.read().unwrap();
+                    let inference_provider_name = cfg.llm.inference_provider
+                        .as_deref()
+                        .unwrap_or(&cfg.llm.provider);
+                    if inference_provider_name == "claude" || inference_provider_name == "openai" {
+                        let confirmation_key = format!("external_api_{}", inference_provider_name);
+                        let needs_confirmation = {
+                            let db = db_clone.lock().unwrap();
+                            !db.is_confirmed(&confirmation_key).unwrap_or(true)
+                        };
+                        if needs_confirmation {
+                            events::emit_question(
+                                &app_handle,
+                                &format!(
+                                    "外部LLM API ({}) を推論に使用します。ウィンドウタイトル等の操作データが外部サーバーに送信されます。よろしいですか？（このメッセージは初回のみ表示されます）",
+                                    inference_provider_name
+                                ),
+                            );
+                            let db = db_clone.lock().unwrap();
+                            db.set_confirmed(&confirmation_key).ok();
+                        }
                     }
                 }
 
@@ -283,7 +387,17 @@ pub fn run() {
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
                 loop {
-                    ticker.tick().await;
+                    tokio::select! {
+                        _ = ticker.tick() => {},
+                        Ok(()) = polling_interval_rx.changed() => {
+                            let new_interval = *polling_interval_rx.borrow();
+                            info!("Polling interval changed to {} minutes", new_interval);
+                            ticker = tokio::time::interval(tokio::time::Duration::from_secs(new_interval * 60));
+                            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                            ticker.tick().await; // consume immediate first tick
+                            continue;
+                        }
+                    }
                     debug!("Polling cycle started");
 
                     if let Some(result) = poller.poll_once().await {
@@ -300,12 +414,15 @@ pub fn run() {
                             continue;
                         }
 
-                        let inference_provider = match create_inference_provider(&config_clone.llm) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!("Failed to create inference provider: {}", e);
-                                question_queue.update_afk_state(result.is_afk);
-                                continue;
+                        let inference_provider = {
+                            let cfg = config_for_poll.read().unwrap();
+                            match create_inference_provider(&cfg.llm) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    warn!("Failed to create inference provider: {}", e);
+                                    question_queue.update_afk_state(result.is_afk);
+                                    continue;
+                                }
                             }
                         };
 

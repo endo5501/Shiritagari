@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
     #[serde(default)]
     pub polling: PollingConfig,
@@ -16,7 +16,7 @@ pub struct AppConfig {
     pub mascot: MascotConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PollingConfig {
     #[serde(default = "default_polling_interval")]
     pub interval_minutes: u64,
@@ -34,7 +34,7 @@ fn default_polling_interval() -> u64 {
     10
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct LlmConfig {
     #[serde(default = "default_provider")]
     pub provider: String,
@@ -82,7 +82,7 @@ fn default_provider() -> String {
     "ollama".to_string()
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PrivacyConfig {
     #[serde(default)]
     pub allowlist_apps: Vec<String>,
@@ -116,7 +116,7 @@ impl Default for MascotConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ConfidenceConfig {
     #[serde(default = "default_decay_rate")]
     pub decay_rate: f64,
@@ -161,6 +161,15 @@ impl AppConfig {
         } else {
             Ok(Self::default())
         }
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let content = toml::to_string_pretty(self)?;
+        fs::write(path, content)?;
+        Ok(())
     }
 }
 
@@ -288,5 +297,89 @@ character_image = "/path/to/character.png"
             config.mascot.character_image,
             Some("/path/to/character.png".to_string())
         );
+    }
+
+    #[test]
+    fn test_save_config_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = AppConfig::default();
+        config.llm.provider = "claude".to_string();
+        config.llm.model = Some("claude-sonnet-4-20250514".to_string());
+        config.polling.interval_minutes = 30;
+
+        config.save(&path).unwrap();
+
+        let loaded = AppConfig::load(&path).unwrap();
+        assert_eq!(loaded.llm.provider, "claude");
+        assert_eq!(loaded.llm.model, Some("claude-sonnet-4-20250514".to_string()));
+        assert_eq!(loaded.polling.interval_minutes, 30);
+    }
+
+    #[test]
+    fn test_save_config_preserves_unmanaged_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        // Write initial config with advanced settings
+        let initial_toml = r#"
+[llm]
+provider = "ollama"
+inference_provider = "claude"
+inference_model = "claude-sonnet-4-20250514"
+inference_api_key_env = "ANTHROPIC_API_KEY"
+
+[confidence]
+decay_rate = 0.95
+"#;
+        fs::write(&path, initial_toml).unwrap();
+
+        // Load, modify managed fields, save
+        let mut config = AppConfig::load(&path).unwrap();
+        config.llm.provider = "openai".to_string();
+        config.polling.interval_minutes = 5;
+        config.save(&path).unwrap();
+
+        // Verify managed fields changed and unmanaged fields preserved
+        let loaded = AppConfig::load(&path).unwrap();
+        assert_eq!(loaded.llm.provider, "openai");
+        assert_eq!(loaded.polling.interval_minutes, 5);
+        assert_eq!(loaded.llm.inference_provider, Some("claude".to_string()));
+        assert_eq!(loaded.llm.inference_model, Some("claude-sonnet-4-20250514".to_string()));
+        assert_eq!(loaded.confidence.decay_rate, 0.95);
+    }
+
+    #[test]
+    fn test_save_config_creates_parent_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subdir").join("config.toml");
+
+        let config = AppConfig::default();
+        config.save(&path).unwrap();
+
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_save_config_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = AppConfig::default();
+        config.llm.provider = "ollama".to_string();
+        config.llm.model = Some("llama3".to_string());
+        config.llm.ollama_base_url = Some("http://myserver:11434".to_string());
+        config.privacy.blocklist_apps = vec!["Signal".to_string(), "1Password".to_string()];
+        config.mascot.character_image = Some("/path/to/img.png".to_string());
+
+        config.save(&path).unwrap();
+        let loaded = AppConfig::load(&path).unwrap();
+
+        assert_eq!(loaded.llm.provider, "ollama");
+        assert_eq!(loaded.llm.model, Some("llama3".to_string()));
+        assert_eq!(loaded.llm.ollama_base_url, Some("http://myserver:11434".to_string()));
+        assert_eq!(loaded.privacy.blocklist_apps, vec!["Signal", "1Password"]);
+        assert_eq!(loaded.mascot.character_image, Some("/path/to/img.png".to_string()));
     }
 }

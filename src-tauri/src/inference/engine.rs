@@ -1,5 +1,6 @@
 use chrono::Utc;
 use log::{debug, info};
+use std::sync::{Arc, RwLock};
 
 use crate::config::AppConfig;
 use crate::inference::aggregation::aggregate_events;
@@ -10,7 +11,7 @@ use crate::providers::redaction::{redact_text, should_include_app};
 use crate::providers::types::*;
 
 pub struct InferenceEngine {
-    config: AppConfig,
+    config: Arc<RwLock<AppConfig>>,
 }
 
 #[derive(Debug)]
@@ -39,7 +40,7 @@ pub enum PatternMatchResult {
 }
 
 impl InferenceEngine {
-    pub fn new(config: AppConfig) -> Self {
+    pub fn new(config: Arc<RwLock<AppConfig>>) -> Self {
         Self { config }
     }
 
@@ -53,11 +54,13 @@ impl InferenceEngine {
             return None;
         }
 
+        let config = self.config.read().unwrap();
+
         let filtered: Vec<&AwEvent> = events
             .iter()
             .filter(|e| {
                 e.app()
-                    .map(|app| should_include_app(app, &self.config.privacy))
+                    .map(|app| should_include_app(app, &config.privacy))
                     .unwrap_or(false)
             })
             .collect();
@@ -88,10 +91,10 @@ impl InferenceEngine {
                     pattern.confidence,
                     &pattern.last_confirmed,
                     &now,
-                    &self.config.confidence,
+                    &config.confidence,
                 );
 
-                let action = determine_action(eff_conf, &self.config.confidence, true);
+                let action = determine_action(eff_conf, &config.confidence, true);
 
                 info!(
                     "Pattern match: app={}, effective_confidence={:.3}, action={:?}",
@@ -131,7 +134,7 @@ impl InferenceEngine {
             .iter()
             .map(|e| (
                 e.app().unwrap_or("unknown").to_string(),
-                redact_text(e.title().unwrap_or(""), &self.config.privacy),
+                redact_text(e.title().unwrap_or(""), &config.privacy),
                 e.duration,
                 e.timestamp.clone(),
             ))
@@ -226,8 +229,9 @@ impl InferenceEngine {
         primary_title: &str,
         db: &Database,
     ) -> InferenceResult {
+        let config = self.config.read().unwrap();
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let action = determine_action(output.confidence, &self.config.confidence, false);
+        let action = determine_action(output.confidence, &config.confidence, false);
 
         info!(
             "LLM result: confidence={:.3}, should_ask={}, action={:?}",
