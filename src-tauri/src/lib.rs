@@ -18,11 +18,12 @@ use providers::factory::{create_chat_provider, create_inference_provider};
 use providers::types::{ChatMessage, MessageRole};
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use tauri::{
     tray::TrayIconBuilder, Manager, State, WebviewUrl,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     webview::WebviewWindowBuilder,
 };
 
@@ -33,6 +34,8 @@ pub struct AppState {
     pub command_router: Arc<CommandRouter>,
     pub web_port: OnceLock<Option<u16>>,
     pub polling_interval_tx: tokio::sync::watch::Sender<u64>,
+    pub user_pinned: AtomicBool,
+    pub question_topmost: AtomicBool,
 }
 
 fn bring_window_to_front(app_handle: &tauri::AppHandle) {
@@ -208,9 +211,10 @@ async fn answer_question(
     })
     .map_err(|e| format!("Failed to save episode: {}", e))?;
 
-    // Restore normal window state after answering
+    state.question_topmost.store(false, Ordering::Release);
     if let Some(window) = app_handle.get_webview_window("main") {
-        window.set_always_on_top(false).ok();
+        let pinned = state.user_pinned.load(Ordering::Acquire);
+        window.set_always_on_top(pinned).ok();
     }
 
     Ok(())
@@ -255,6 +259,8 @@ pub fn run() {
         command_router,
         web_port: OnceLock::new(),
         polling_interval_tx,
+        user_pinned: AtomicBool::new(false),
+        question_topmost: AtomicBool::new(false),
     };
 
     tauri::Builder::default()
@@ -283,9 +289,11 @@ pub fn run() {
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
             let knowledge = MenuItemBuilder::with_id("knowledge", "Knowledge Base").build(app)?;
             let settings = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
+            let always_on_top_item = CheckMenuItemBuilder::with_id("always_on_top", "Always on Top").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&show, &knowledge, &settings, &quit]).build()?;
+            let menu = MenuBuilder::new(app).items(&[&show, &knowledge, &settings, &always_on_top_item, &quit]).build()?;
 
+            let always_on_top_handle = always_on_top_item.clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().unwrap())
                 .icon_as_template(true)
@@ -332,6 +340,15 @@ pub fn run() {
                             .resizable(true)
                             .build()
                             .ok();
+                        }
+                    }
+                    "always_on_top" => {
+                        let is_checked = always_on_top_handle.is_checked().unwrap_or(false);
+                        let state = app.state::<AppState>();
+                        state.user_pinned.store(is_checked, Ordering::Release);
+                        if let Some(window) = app.get_webview_window("main") {
+                            let effective = is_checked || state.question_topmost.load(Ordering::Acquire);
+                            window.set_always_on_top(effective).ok();
                         }
                     }
                     "quit" => {
