@@ -161,7 +161,7 @@ mod tests {
                 confidence: 0.7,
                 asked_user: false,
                 matched_pattern_id: None,
-                expires_at: "2026-04-10T10:00:00".to_string(),
+                expires_at: "2099-12-31T23:59:59".to_string(),
             })
             .unwrap();
         }
@@ -190,7 +190,7 @@ mod tests {
                 confidence: 0.7,
                 asked_user: false,
                 matched_pattern_id: None,
-                expires_at: "2026-04-10T10:00:00".to_string(),
+                expires_at: "2099-12-31T23:59:59".to_string(),
             })
             .unwrap();
         }
@@ -226,7 +226,7 @@ mod tests {
                 confidence: 0.7,
                 asked_user: false,
                 matched_pattern_id: None,
-                expires_at: "2026-04-10T10:00:00".to_string(),
+                expires_at: "2099-12-31T23:59:59".to_string(),
             })
             .unwrap();
         }
